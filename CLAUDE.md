@@ -3,6 +3,12 @@
 Application web d'organisation familiale : calendrier, tâches, courses, repas, événements
 importants, messages, documents et routines — partagés en temps réel entre les membres d'une famille.
 
+Chaque utilisateur a son propre compte (e-mail/mot de passe ou Google) et peut appartenir à
+**plusieurs maisons** (typiquement une par parent séparé) — il choisit/change de maison depuis
+l'écran « Vos familles » ou le sélecteur dans l'en-tête de l'app (`ouvrirSelecteurMaison`, section D).
+Ce n'est pas un site à une seule famille : la donnée est entièrement cloisonnée par maison
+(`maisons/{CODE}/...`), et un utilisateur peut en créer ou en rejoindre autant qu'il veut avec un code.
+
 Site statique en **un seul fichier** (`index.html`) — c'est un choix assumé et **reconfirmé** par
 l'utilisateur : il n'est pas développeur et veut pouvoir ouvrir, lire et déployer le site sans build
 ni outillage. Ne pas éclater en modules, même si le fichier est gros (~4 700 lignes).
@@ -54,7 +60,8 @@ Deux mécanismes portent la majeure partie du code, à réutiliser plutôt qu'à
 maisons/{CODE}                      { nom, proprietaireUid, membres: [uid], dateCreation }
   /prive/secrets                    { codeEnfant }   ← jamais lisible par un client
   /enfantsVerifies/{uidAnonyme}     { codeSaisi, dateVerification }
-  /profils/{uid}                    { prenom, nom, couleur, role, email, tableauBord[], tableauMasques[] }
+  /profils/{uid}                    { prenom, nom, couleur, role, email, tableauBord[], tableauMasques[],
+                                      dernierLuGroupe }  ← horodatage de lecture du fil de groupe
   /enfants/{id}                     { nom, couleur }            ← enfants sans compte
   /evenements/{id}                  { titre, date, debut, fin, journeeEntiere, recurrence,
                                       personneId, categorie, lieu, description, couleur }
@@ -67,6 +74,12 @@ maisons/{CODE}                      { nom, proprietaireUid, membres: [uid], date
   /repas/{id}                       { date, type, nom, description, recette, ingredients[], responsable }
   /evenementsImportants/{id}        { titre, date, personneId, recurrenceAnnuelle, anneeNaissance }
   /messages/{id}                    { texte, auteurId, auteurNom, important, epingle, dateCreation }
+                                     ← tableau familial unique, présenté comme la conversation « Groupe »
+  /conversations/{id}                { type: "privee", participants: [uid1, uid2], dernierTexte,
+                                       dernierAuteurId, dateDernierMessage, lu: {uid: horodatage} }
+    /messages/{id}                   { texte, auteurId, auteurNom, dateCreation }
+                                     ← messagerie privée à deux, réservée aux membres d'une même maison
+                                       (jamais aux enfants) ; id déterministe `dm_` + les deux uid triés
   /documents/{id}                   { nom, url, chemin, taille, typeMime, categorie, ajoutePar }
   /routines/{id}                    { nom, assigneA, recurrence, actif, etapes[], progression{ISO:[ids]} }
   /meta/coursesSemaine              { semaine }        ← reset hebdomadaire automatique
@@ -98,10 +111,13 @@ version : ne pas les fusionner dans `articles`, des données réelles y vivent.
 ## Configuration Firebase à faire / vérifier
 
 - Authentication → fournisseurs **Email/Password** et **Anonymous** activés. *(déjà fait)*
+- Authentication → fournisseur **Google** : **à activer** dans Authentication → Sign-in method.
+  Sans ça, le bouton « Continuer avec Google » échoue avec `auth/operation-not-allowed`.
 - Authentication → Settings → Authorized domains : le domaine Netlify doit y figurer.
   **À refaire à chaque nouvelle URL Netlify**, sinon la connexion échoue.
 - Firestore → Rules : publier le contenu de `firestore.rules`. **À REPUBLIER** — les règles ont changé
-  (profils, evenements, listes, articles, repas, evenementsImportants, messages, documents, routines).
+  (profils, evenements, listes, articles, repas, evenementsImportants, messages, **conversations**,
+  documents, routines).
 - Storage → activer le service puis publier `storage.rules`. **Non fait à ce jour** : depuis fin 2024,
   Firebase impose le plan **Blaze** (carte bancaire au dossier) pour activer Storage. L'usage d'une
   famille reste dans le quota gratuit, mais la décision appartient à l'utilisateur.
@@ -114,11 +130,29 @@ Deux thèmes complets, pilotés par jetons CSS (`[data-theme="sombre"]` / `[data
 avec un réglage « Système ». **Le sombre reste le défaut** : l'utilisateur avait trouvé une ancienne
 version claire « nulle » — ne pas changer ce défaut sans lui demander.
 
-- Sombre : fond quasi noir, dégradé violet → bleu → cyan, cartes en verre dépoli, lueurs.
-- Clair : blanc cassé chaleureux, bleu famille `#2563EB`, vert « tâche faite » `#047857`, ambre `#B45309`
-  (palette « Family Calendar & Chores » du skill `ui-ux-pro-max`).
+Palette **sobre et professionnelle, volontairement anti-« AI/SaaS »** (reconfirmé par l'utilisateur en
+2026-09 : pas de dégradés, pas de glassmorphism, pas de lueurs colorées, pas de couleurs saturées).
+Tout passe par les jetons de la section CSS 1 (`:root` + `[data-theme=…]`) — ne jamais coder une
+couleur en dur dans un composant, toujours réutiliser une variable existante.
+
+- Clair : fond blanc cassé chaud `#F8F8F6`, cartes blanches à bordure très légère `#E5E5E2`, texte
+  `#1F1F1F`/`#6B6B6B`, accent unique bleu ardoise `#3E5C76` (`--primaire`), utilisé avec parcimonie
+  (boutons primaires, liens, sélection) — jamais comme décoration.
+- Sombre : fond presque noir mais neutre `#17171A` (pas de teinte violette), surfaces qui s'éclaircissent
+  progressivement (`--fond` < `--fond-2` < `--carte` < `--carte-2`), même logique d'accent unique,
+  desaturé et éclairci pour rester lisible sur fond sombre.
+- Couleurs fonctionnelles desaturées : succès (vert sauge `--secondaire`), attention (ambre `--accent`),
+  erreur (rouge sourd `--danger`) — jamais de couleurs vives.
+- `--degrade` (dégradés du logo/FAB/avatars) et `--voile-fond` (halos colorés d'arrière-plan) sont
+  volontairement neutralisés : le premier vaut `var(--primaire)` (couleur plate), le second `none`.
+  Ne pas les réintroduire comme de vrais dégradés sans en reparler à l'utilisateur.
+- Ombres très légères (`--ombre-carte`, `--ombre-haute`) — jamais de glow coloré (`box-shadow` teinté
+  par `--primaire` par ex.) autour des boutons ou du FAB.
 - Typographie : Varela Round (titres) + Nunito Sans (texte) — appairage « Soft Rounded », chaleureux.
-- Chaque membre a **sa couleur**, réutilisée partout (calendrier, tâches, avatars).
+- Chaque membre a **sa couleur**, réutilisée partout (calendrier, tâches, avatars) — palette
+  `--membre-1..8` douce et désaturée (bleu ardoise, vert sauge, terracotta, mauve, gris bleuté, ocre,
+  taupe, sarcelle), dupliquée en JS dans `COULEURS_MEMBRE` (les profils existants gardent leur ancienne
+  couleur stockée en base tant qu'elle n'est pas changée manuellement — aucune migration automatique).
 - Icônes : sprite SVG intégré (jeu Lucide). **Jamais d'emoji comme icône.**
 
 ## Pièges rencontrés

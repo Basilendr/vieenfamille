@@ -193,6 +193,29 @@ service cloud.firestore {
           && (resource.data.auteurId == request.auth.uid || estAdmin(maisonId));
       }
 
+      /* ---- Conversations privées : réservées à deux membres de la maison,
+         jamais aux enfants. L'id contient les deux uid mais les règles ne se
+         fient qu'au tableau `participants`. ---- */
+      match /conversations/{convId} {
+        allow read: if estMembre(maisonId) && request.auth.uid in resource.data.participants;
+        allow create: if estMembre(maisonId)
+          && request.auth.uid in request.resource.data.participants
+          && request.resource.data.participants.size() == 2;
+        allow update: if estMembre(maisonId) && request.auth.uid in resource.data.participants
+          && modifieUniquement(['lu', 'dernierTexte', 'dernierAuteurId', 'dateDernierMessage']);
+        allow delete: if false;
+
+        match /messages/{msgId} {
+          function conversation() {
+            return get(/databases/$(database)/documents/maisons/$(maisonId)/conversations/$(convId)).data;
+          }
+          allow read: if estMembre(maisonId) && request.auth.uid in conversation().participants;
+          allow create: if estMembre(maisonId) && request.auth.uid in conversation().participants
+            && request.resource.data.auteurId == request.auth.uid;
+          allow update, delete: if estMembre(maisonId) && resource.data.auteurId == request.auth.uid;
+        }
+      }
+
       /* ---- Documents : jamais accessibles à un enfant ---- */
       match /documents/{docId} {
         allow read: if estMembre(maisonId);
