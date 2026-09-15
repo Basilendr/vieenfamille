@@ -17,7 +17,8 @@ fichier, on le lit, on le déploie.
 
 - HTML / CSS / JavaScript, sans dépendance à installer
 - Firebase chargé par CDN : Authentication, Firestore (temps réel), Storage
-- Déploiement : glisser-déposer du dossier sur Netlify
+- Déploiement : Vercel, relié directement au dépôt GitHub — chaque `push` sur
+  `main` redéploie automatiquement, aucune action manuelle nécessaire
 
 ## Fichiers
 
@@ -28,6 +29,7 @@ fichier, on le lit, on le déploie.
 | `storage.rules` | Règles de sécurité Storage — à publier dans la console Firebase |
 | `manifest.json`, `icon.svg` | Installation sur écran d'accueil |
 | `sw.js` | Service worker : coquille disponible hors connexion |
+| `vercel.json` | Empêche le navigateur de mettre `index.html`/`sw.js` en cache trop longtemps |
 | `CLAUDE.md` | Documentation technique détaillée (modèle de données, rôles, pièges) |
 | `design-system/` | Direction de design de référence |
 
@@ -46,8 +48,11 @@ Puis http://localhost:8080 (`localhost` est autorisé par défaut dans Firebase)
 
 - **Administrateur** — gère les membres, les rôles et le code enfant
 - **Membre** — crée et modifie tout le contenu familial
-- **Enfant** — sans compte, entre par un code ; peut seulement cocher ses tâches,
-  ses courses et ses routines, et n'accède jamais aux documents
+- **Enfant** — sans compte, entre par un code ; peut toujours consulter, cocher ses
+  tâches/routines, demander un produit aux courses et écrire dans le groupe. Le
+  reste (créer/modifier/supprimer une tâche, un événement…) dépend de permissions
+  accordées au cas par cas par un parent (Famille → icône bouclier sur l'enfant).
+  N'accède jamais aux documents, quoi qu'un parent coche.
 
 Ces restrictions sont appliquées deux fois : dans l'interface, et surtout dans
 les règles de sécurité côté serveur.
