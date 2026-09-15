@@ -60,13 +60,18 @@ Deux mécanismes portent la majeure partie du code, à réutiliser plutôt qu'à
 ```
 maisons/{CODE}                      { nom, proprietaireUid, membres: [uid], dateCreation }
   /prive/secrets                    { codeEnfant }   ← jamais lisible par un client
-  /enfantsVerifies/{uidAnonyme}     { codeSaisi, dateVerification }
+  /enfantsVerifies/{uidAnonyme}     { codeSaisi, dateVerification, enfantIdActuel }
+                                     ← enfantIdActuel : quel enfants/{id} cette session anonyme
+                                       incarne actuellement (posé en même temps que uidActuel,
+                                       voir plus bas) — permet aux règles de retrouver les
+                                       permissions de CET enfant sans requête inverse.
   /profils/{uid}                    { prenom, nom, couleur, role, email, photoURL, tableauBord[],
                                       tableauMasques[], dernierLuGroupe, permissions }
                                      ← role: "admin" | "membre" | "restreint" ; permissions n'a de sens
                                        que pour "restreint" (voir § Accès et rôles) ; photoURL pointe
                                        vers Storage familles/{CODE}/avatars/{uid}
-  /enfants/{id}                     { nom, couleur }            ← enfants sans compte
+  /enfants/{id}                     { nom, couleur, photoURL, uidActuel, permissions }
+                                     ← enfants sans compte ; permissions : voir § Permissions enfant
   /evenements/{id}                  { titre, date, debut, fin, journeeEntiere, recurrence,
                                       personneId, categorie, lieu, description, couleur }
   /taches/{id}                      { nom, assigneA, date, heureLimite, priorite, statut,
@@ -143,11 +148,14 @@ version : ne pas les fusionner dans `articles`, des données réelles y vivent.
   aux espaces, la comparaison Firestore étant une égalité stricte de chaîne. Une fois validé,
   écriture d'un doc dans `enfantsVerifies` que les règles n'autorisent que si le code correspond,
   puis choix du prénom dans la liste (ce qui pose `enfants/{id}.uidActuel`, voir plus haut).
-  Depuis 2026-09, un enfant **n'est plus en lecture seule** : il peut écrire dans le groupe familial
-  (et gérer ses propres messages), créer une **demande de course** (jamais l'ajouter directement —
-  un parent valide), cocher ses tâches/courses/étapes de routine (déjà permis), et modifier sa propre
-  couleur/photo de profil (`enfants/{id}`, jamais son prénom). Toujours interdit : créer/modifier une
-  tâche, un événement, une routine, accéder aux documents, ou agir au nom d'un autre enfant.
+  Depuis 2026-09, un enfant **n'est plus en lecture seule** : il peut toujours (sans rien à cocher,
+  quel que soit ce qu'un parent lui accorde en plus) écrire dans le groupe familial et gérer ses
+  propres messages, créer une **demande de course** (jamais l'ajouter directement — un parent
+  valide), cocher ses tâches/courses/étapes de routine, et modifier sa propre couleur/photo de
+  profil (`enfants/{id}`, jamais son prénom). Le reste (créer/modifier/supprimer une tâche, un
+  événement, un repas, une date importante, une routine, un produit de liste…) dépend de
+  **permissions granulaires par enfant** — voir § Permissions enfant juste après. `Documents` reste
+  de toute façon interdit à un enfant (Storage ne lui ouvre aucun accès, voir plus bas).
   Peut changer de maison sans se déconnecter : `afficherMesMaisonsEnfant()` relit la liste des
   maisons déjà vérifiées avec succès sur **ce navigateur** (`localStorage['vef-enfant-maisons']`,
   posée par `retenirMaisonEnfant`) — un enfant n'a pas de `membres[]` à interroger côté serveur
@@ -158,11 +166,63 @@ version : ne pas les fusionner dans `articles`, des données réelles y vivent.
     navigation (barre latérale, barre basse, menu « Plus ») selon `aAccesFonctionnalite(cle)` —
     le routeur (`Routeur.aller`) redirige aussi vers l'accueil si on force une page non autorisée.
   - Règles Firestore/Storage : **c'est la vraie barrière de sécurité**, la seule qui compte si
-    quelqu'un contourne l'interface. Un enfant ne peut que cocher (`achete`, `fait`/`faitLe`,
-    `progression`), jamais créer ni supprimer, et n'a **aucun** accès aux documents. Un membre
-    restreint sans la case cochée n'a **aucun** accès (lecture comme écriture) à la collection
-    correspondante — `accesFonctionnalite()` dans `firestore.rules`.
+    quelqu'un contourne l'interface. Cocher (`achete`, `fait`/`faitLe`, `progression`) reste
+    toujours permis à un enfant ; créer/modifier/supprimer dépend de `enfants/{id}.permissions`
+    (voir § Permissions enfant) — jamais un accès accordé par la seule interface. Un enfant n'a
+    **aucun** accès aux documents, quoi qu'un parent coche. Un membre restreint sans la case cochée
+    n'a **aucun** accès (lecture comme écriture) à la collection correspondante —
+    `accesFonctionnalite()` dans `firestore.rules`.
 - Le reset hebdomadaire des courses et l'expiration des achats ponctuels ne tournent que pour un parent.
+
+## Permissions enfant (2026-09)
+
+Un enfant **n'est pas condamné à la lecture seule** : au-delà de ce qui est toujours permis
+(consulter, terminer ses tâches/routines, demander un produit, écrire dans le groupe, modifier sa
+couleur/photo — voir § Accès et rôles), chaque action de création/modification/suppression est une
+**permission granulaire, désactivée par défaut**, qu'un parent accorde au cas par cas — jamais un
+simple bouton « enfant = oui/non ». Ni migration ni valeur par défaut à écrire quelque part : un
+champ absent de `enfants/{id}.permissions` vaut `false` partout (client comme règles), donc les
+enfants déjà créés n'ont besoin d'aucun traitement particulier.
+
+- **Catalogue** (`PERMISSIONS_ENFANT`, section F11, ~ligne 5230) : une trentaine de clés du type
+  `calendrier_creer`, `taches_modifier_propres`, `courses_supprimer`, `messages_epingler`…
+  regroupées par fonctionnalité, avec leur libellé affiché. `taches_*_propres` vs `taches_*_autres`
+  distingue modifier/supprimer une tâche **assignée à cet enfant** (`assigneA == l'enfant`) d'une
+  tâche de quelqu'un d'autre — les autres fonctionnalités n'ont pas cette distinction (pas de notion
+  de « propriétaire » pertinente pour un événement ou un repas dans ce modèle de données).
+  `Documents` et `Administration` (gérer les permissions, paramètres de famille, membres) ne
+  figurent **volontairement pas** au catalogue : jamais accordables à un enfant, quel que soit ce
+  qu'un parent coche.
+- **Interface parent** : Famille → icône bouclier sur un enfant → `gererPermissionsEnfant()`, une
+  modale (pas le `ouvrirFormulaire()` générique, la grille catégorisée de cases à cocher s'y prêtait
+  mal) qui écrit l'objet complet dans `enfants/{id}.permissions` (remplace tout, pas de fusion
+  partielle — chaque sauvegarde envoie l'état de toutes les cases).
+- **Interface enfant** : `enfantA(cle)` (section C) lit `Etat.donnees.enfants` (déjà écouté en temps
+  réel pour tout le monde, y compris un enfant) — un changement de permission par un parent se
+  reflète donc **sans reconnexion**, dès le prochain instantané Firestore. Chaque bouton
+  « créer/modifier/supprimer » vérifie `peutEcrire() || enfantA(cle)` plutôt que `peutEcrire()` seul
+  (ex. `nouvelleTache`, `ligneTacheHTML`) ; `Donnees.ajouter`/`Donnees.supprimer` acceptent un
+  paramètre `autoriseEnfant` (booléen déjà calculé par l'appelant, pas une simple clé — nécessaire
+  pour les cas « propres » qui dépendent de la ressource) en plus de `peutEcrire()`. Le bouton flottant
+  d'ajout rapide (`peutCreerFonctionnalite()`) et le raccourci `data-action="ajout-rapide"` sont
+  désormais visibles pour un enfant aussi (avant : masqués sans condition), leur contenu se filtrant
+  tout seul selon les permissions.
+- **Règles Firestore** : `enfantA(maisonId, cle)` retrouve l'enfant **précisément incarné** par la
+  session anonyme via `enfantsVerifies/{uid}.enfantIdActuel` (un lookup direct, impossible à obtenir
+  par une requête inverse en règles), posé par le même clic que `enfants/{id}.uidActuel`
+  (`afficherChoixEnfant`, dans cet ordre — la règle de `enfantsVerifies` exige que `uidActuel`
+  désigne déjà cette session avant d'accepter `enfantIdActuel`, jamais l'inverse). Chaque collection
+  (`evenements`, `taches`, `coursesSemaine`/`achatsSpecifiques`/`articles`/`listes`, `repas`,
+  `evenementsImportants`, `routines`, `messages`) a sa règle `create`/`update`/`delete` élargie d'un
+  `|| enfantA(maisonId, 'cle_pertinente')`, en plus de `accesFonctionnalite()` pour les membres.
+- **Ce que ça ne couvre pas** (limitation honnête) : pas d'approbation parentale a posteriori pour
+  une action accordée directement (contrairement aux demandes de courses) — une permission cochée
+  est un accès direct, pas une file d'attente. Pas de distinction « propres/autres » pour le
+  calendrier, les repas, les événements importants ou les routines : le modèle de données ne porte
+  pas de notion de propriétaire pertinente pour ces collections (à la différence de `assigneA` pour
+  les tâches), donc une permission comme `calendrier_modifier` s'applique à tous les événements de la
+  maison, pas seulement ceux créés par cet enfant — décision technique raisonnable plutôt que
+  d'inventer un champ de propriété qui n'existe nulle part ailleurs dans l'app.
 
 **Sécurité — 2026-09** : une faille a été corrigée dans `firestore.rules` sur `maisons/{maisonId}` —
 la règle `update` permettait auparavant à **n'importe quel membre simple** (pas seulement un admin) de
@@ -210,12 +270,16 @@ prioritaire, il faudrait des Firebase Cloud Functions (+ Cloud Scheduler pour le
 - Firestore → Rules : publier le contenu de `firestore.rules`. **À REPUBLIER, urgent** — plusieurs
   changements de sécurité en attente : conversations privées, accès restreint par fonctionnalité, la
   **correction d'une faille** sur `maisons/{maisonId}` (un membre simple pouvait modifier n'importe
-  quel champ, y compris s'auto-nommer propriétaire — voir § Accès et rôles), et désormais aussi les
-  permissions élargies pour les enfants (messages, demandes de courses, photo/couleur) et les
-  collections `demandesCourses`/`notifications`. Tant que ce n'est pas fait : la messagerie privée
-  échoue silencieusement, la faille `maisons` reste ouverte, et **un enfant ne peut ni écrire de
-  message ni faire de demande de course** (vérifié en direct : le blocage vient bien du serveur, pas
-  de l'interface — testé avec un compte enfant qui reçoit `permission-denied` jusqu'à republication).
+  quel champ, y compris s'auto-nommer propriétaire — voir § Accès et rôles), les permissions élargies
+  pour les enfants (messages, demandes de courses, photo/couleur), les collections
+  `demandesCourses`/`notifications`, et désormais aussi les **permissions granulaires enfant** (§
+  Permissions enfant : `enfantA()`, `enfantActuelId()`, et l'élargissement de `enfantsVerifies` pour
+  y poser `enfantIdActuel`). Tant que ce n'est pas fait : la messagerie privée échoue silencieusement,
+  la faille `maisons` reste ouverte, un enfant ne peut ni écrire de message ni faire de demande de
+  course, et **les permissions accordées depuis Famille → bouclier restent sans effet réel** — le
+  parent peut cocher/sauvegarder normalement (ça écrit dans `enfants/{id}`, déjà autorisé), l'enfant
+  voit bien les boutons apparaître (le client lit la même donnée), mais toute tentative d'écriture
+  reçoit `permission-denied` jusqu'à republication (vérifié en direct le 2026-09-15).
 - Storage → activer le service puis publier `storage.rules`. **Non fait à ce jour** : depuis fin 2024,
   Firebase impose le plan **Blaze** (carte bancaire au dossier) pour activer Storage. L'usage d'une
   famille reste dans le quota gratuit, mais la décision appartient à l'utilisateur.
@@ -279,3 +343,5 @@ couleur en dur dans un composant, toujours réutiliser une variable existante.
 - Permissions par document dans l'espace Documents.
 - Glisser-déposer pour réordonner (widgets et étapes de routine se réordonnent par boutons haut/bas).
 - Compte de test laissé dans Firebase Auth : `kevin.test+notrefamille@kawaa.co` (supprimable depuis la console).
+- Compte de test laissé dans Maison Test (membre simple, pour tester l'écran de permissions enfant sans
+  les identifiants d'Alice) : `testperm+vef@kawaa.co` (supprimable depuis Famille ou la console).

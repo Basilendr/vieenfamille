@@ -1388,7 +1388,7 @@ body:not(.role-enfant) .enfant-seulement { display: none !important; }
 
         <!-- ----------------------------- TÂCHES ---------------------------- -->
         <section class="page" id="page-taches" tabindex="-1">
-            <form class="ajout-rapide parent-seulement" id="formTacheRapide">
+            <form class="ajout-rapide cachee" id="formTacheRapide">
                 <input class="saisie" id="tacheRapideNom" placeholder="Nouvelle tâche…" aria-label="Nouvelle tâche" autocomplete="off">
                 <button class="btn btn-primaire" type="submit" aria-label="Ajouter la tâche"><svg class="icone" aria-hidden="true"><use href="#i-plus"></use></svg></button>
             </form>
@@ -1399,7 +1399,7 @@ body:not(.role-enfant) .enfant-seulement { display: none !important; }
         <!-- ----------------------------- COURSES --------------------------- -->
         <section class="page" id="page-courses" tabindex="-1">
             <div class="onglets-listes" id="ongletsListes" role="tablist" aria-label="Listes de courses"></div>
-            <form class="ajout-rapide parent-seulement" id="formCourseRapide">
+            <form class="ajout-rapide cachee" id="formCourseRapide">
                 <input class="saisie" id="courseRapideNom" placeholder="Ajouter un produit puis Entrée…" aria-label="Ajouter un produit" autocomplete="off">
                 <button class="btn btn-primaire" type="submit" aria-label="Ajouter le produit"><svg class="icone" aria-hidden="true"><use href="#i-plus"></use></svg></button>
             </form>
@@ -1507,7 +1507,7 @@ body:not(.role-enfant) .enfant-seulement { display: none !important; }
     </main>
 
     <!-- Bouton flottant d'ajout rapide -->
-    <button class="fab parent-seulement" data-action="ajout-rapide" aria-label="Ajouter quelque chose">
+    <button class="fab" data-action="ajout-rapide" aria-label="Ajouter quelque chose">
         <svg class="icone-l" aria-hidden="true"><use href="#i-plus"></use></svg>
     </button>
 
@@ -2127,13 +2127,36 @@ const estRestreint = () => Etat.role === "restreint";
 /** Une fonctionnalité (clé de FONCTIONNALITES_RESTREIGNABLES) est-elle ouverte à la personne connectée ? */
 const aAccesFonctionnalite = cle => !estRestreint() || Etat.profil?.permissions?.[cle] === true;
 
+/* ---- Permissions enfant : par défaut tout est fermé, un parent coche au cas par cas
+   (voir PERMISSIONS_ENFANT, section F11) — jamais un simple rôle "lecture seule". ---- */
+const enfantActuel = () => estEnfant() ? Etat.donnees.enfants.find(e => e.id === Etat.enfantId) : null;
+const enfantA = cle => enfantActuel()?.permissions?.[cle] === true;
+/** Une tâche/ressource assignée à l'enfant connecté (permissions "…_propres"). */
+const estAMoiEnfant = ressource => estEnfant() && ressource?.assigneA === Etat.enfantId;
+
+/** Clé de permission enfant "création" pour chaque fonctionnalité de FONCTIONNALITES_RESTREIGNABLES
+ *  (les messages n'y figurent pas : un enfant vérifié peut toujours écrire dans le groupe). */
+const CREATION_ENFANT = {
+    calendrier: "calendrier_creer", taches: "taches_creer", courses: "courses_creer",
+    repas: "repas_creer", evenements: "evenements_creer", routines: "routines_creer"
+};
+/** Peut-on créer dans cette fonctionnalité, qu'on soit un membre (restreint ou non) ou un enfant ? */
+const peutCreerFonctionnalite = cle => {
+    if (estEnfant()) return cle === "messages" || enfantA(CREATION_ENFANT[cle]);
+    return aAccesFonctionnalite(cle);
+};
+
 /* ---- Références Firestore ---- */
 const refCollection = nom => collection(db, "maisons", Etat.familleId, nom);
 const refDocument   = (nom, id) => doc(db, "maisons", Etat.familleId, nom, id);
 
 const Donnees = {
-    async ajouter(nom, valeurs) {
-        if (!peutEcrire()) { toast("Action réservée aux parents.", "erreur"); return null; }
+    /** `autoriseEnfant` : booléen déjà calculé par l'appelant (ex. `enfantA("calendrier_creer")`,
+     *  ou une vérification tenant compte de la propriété de la ressource pour les tâches) — permet
+     *  à un enfant d'agir ici même si `peutEcrire()` est faux. La vraie barrière reste les règles
+     *  Firestore ; ce contrôle n'est qu'un confort d'interface cohérent avec elles. */
+    async ajouter(nom, valeurs, autoriseEnfant = false) {
+        if (!peutEcrire() && !autoriseEnfant) { toast("Action non autorisée.", "erreur"); return null; }
         try {
             const reference = await addDoc(refCollection(nom), {
                 ...valeurs, creePar: Etat.utilisateur.uid, dateCreation: Date.now()
@@ -2147,8 +2170,8 @@ const Donnees = {
             return true;
         } catch (erreur) { toast(messageErreur(erreur), "erreur"); return false; }
     },
-    async supprimer(nom, id) {
-        if (!peutEcrire()) { toast("Action réservée aux parents.", "erreur"); return false; }
+    async supprimer(nom, id, autoriseEnfant = false) {
+        if (!peutEcrire() && !autoriseEnfant) { toast("Action non autorisée.", "erreur"); return false; }
         try { await deleteDoc(refDocument(nom, id)); return true; }
         catch (erreur) { toast(messageErreur(erreur), "erreur"); return false; }
     },
@@ -2941,7 +2964,7 @@ function ouvrirAjoutRapide() {
         { action: "nouveau-repas", icone: "i-repas", nom: "Repas", fonctionnalite: "repas" },
         { action: "nouveau-message", icone: "i-messages", nom: "Message", fonctionnalite: "messages" },
         { action: "nouvel-evenement-important", icone: "i-evenements", nom: "Anniversaire", fonctionnalite: "evenements" }
-    ].filter(e => aAccesFonctionnalite(e.fonctionnalite));
+    ].filter(e => peutCreerFonctionnalite(e.fonctionnalite));
     ouvrirModale({
         titre: "Ajouter", description: "Que voulez-vous créer ?",
         masquerPied: true,
@@ -3374,7 +3397,7 @@ function champsEvenement() {
 }
 
 function nouvelEvenement(dateIso = null) {
-    if (!peutEcrire()) return;
+    if (!peutEcrire() && !enfantA("calendrier_creer")) return;
     ouvrirFormulaire({
         titre: "Nouvel événement",
         champs: champsEvenement(),
@@ -3384,7 +3407,7 @@ function nouvelEvenement(dateIso = null) {
         },
         texteValider: "Créer",
         async onValider(valeurs) {
-            const id = await Donnees.ajouter("evenements", nettoyerEvenement(valeurs));
+            const id = await Donnees.ajouter("evenements", nettoyerEvenement(valeurs), enfantA("calendrier_creer"));
             if (id) toast("Événement ajouté");
         }
     });
@@ -3429,11 +3452,12 @@ function ouvrirEvenement(id) {
                     <svg class="icone-s texte-faible" aria-hidden="true"><use href="#${l.icone}"></use></svg>${esc(l.texte)}</div>`).join("")}
                 ${evenement.description ? `<p class="texte-doux" style="white-space:pre-wrap;margin-top:var(--espace-2)">${esc(evenement.description)}</p>` : ""}
             </div>
-            ${peutEcrire() ? `<div class="rangee" style="padding-bottom:var(--espace-5)">
-                <button class="btn btn-contour" data-modifier-evenement="${esc(id)}">
-                    <svg class="icone-s" aria-hidden="true"><use href="#i-crayon"></use></svg> Modifier</button>
-                <button class="btn btn-danger pousse" data-supprimer-evenement="${esc(id)}">
-                    <svg class="icone-s" aria-hidden="true"><use href="#i-corbeille"></use></svg> Supprimer</button>
+            ${(peutEcrire() || enfantA("calendrier_modifier") || enfantA("calendrier_supprimer"))
+              ? `<div class="rangee" style="padding-bottom:var(--espace-5)">
+                ${(peutEcrire() || enfantA("calendrier_modifier")) ? `<button class="btn btn-contour" data-modifier-evenement="${esc(id)}">
+                    <svg class="icone-s" aria-hidden="true"><use href="#i-crayon"></use></svg> Modifier</button>` : ""}
+                ${(peutEcrire() || enfantA("calendrier_supprimer")) ? `<button class="btn btn-danger pousse" data-supprimer-evenement="${esc(id)}">
+                    <svg class="icone-s" aria-hidden="true"><use href="#i-corbeille"></use></svg> Supprimer</button>` : ""}
             </div>` : ""}`,
         onMonte(boite, fermer) {
             boite.addEventListener("click", e => {
@@ -3446,7 +3470,7 @@ function ouvrirEvenement(id) {
 
 function modifierEvenement(id) {
     const evenement = Etat.donnees.evenements.find(e => e.id === id);
-    if (!evenement || !peutEcrire()) return;
+    if (!evenement || (!peutEcrire() && !enfantA("calendrier_modifier"))) return;
     ouvrirFormulaire({
         titre: "Modifier l'événement",
         champs: champsEvenement(),
@@ -3459,6 +3483,7 @@ function modifierEvenement(id) {
 }
 
 async function supprimerEvenement(id) {
+    if (!peutEcrire() && !enfantA("calendrier_supprimer")) return;
     const evenement = Etat.donnees.evenements.find(e => e.id === id);
     const ok = await confirmer({
         titre: "Supprimer l'événement",
@@ -3466,7 +3491,7 @@ async function supprimerEvenement(id) {
         texteConfirmer: "Supprimer", danger: true
     });
     if (!ok) return;
-    if (await Donnees.supprimer("evenements", id)) toast("Événement supprimé");
+    if (await Donnees.supprimer("evenements", id, enfantA("calendrier_supprimer"))) toast("Événement supprimé");
 }
 
 /** Ouvre le jour cliqué : liste des événements + création. */
@@ -3491,7 +3516,7 @@ function ouvrirJour(iso) {
                     </span>
                 </button>`).join("")
             : (importants.length ? "" : etatVideHTML("i-calendrier", "Journée libre", "Aucun événement prévu ce jour-là."))}
-            ${peutEcrire() ? `<button class="btn btn-primaire btn-bloc" data-nouvel-evenement-jour="${iso}"
+            ${(peutEcrire() || enfantA("calendrier_creer")) ? `<button class="btn btn-primaire btn-bloc" data-nouvel-evenement-jour="${iso}"
                 style="margin:var(--espace-4) 0 var(--espace-5)">
                 <svg class="icone-s" aria-hidden="true"><use href="#i-plus"></use></svg> Ajouter un événement</button>` : ""}`,
         onMonte(boite, fermer) {
@@ -3531,6 +3556,7 @@ function tachesFiltrees() {
 }
 
 function rendreTaches() {
+    $("#formTacheRapide").classList.toggle("cachee", !(peutEcrire() || enfantA("taches_creer")));
     $("#tachesFiltres").innerHTML = FILTRES_TACHES.map(f =>
         `<button class="puce" data-filtre-tache="${f.id}" aria-pressed="${Etat.ui.tachesFiltre === f.id}">${esc(f.nom)}</button>`).join("");
 
@@ -3539,7 +3565,7 @@ function rendreTaches() {
         if (!taches.length) {
             return etatVideHTML("i-taches", "Aucune tâche ici",
                 Etat.ui.tachesFiltre === "aujourdhui" ? "Rien à faire aujourd'hui. Profitez-en." : "Changez de filtre ou créez une tâche.",
-                peutEcrire() ? `<button class="btn btn-primaire btn-s" data-action="nouvelle-tache">
+                (peutEcrire() || enfantA("taches_creer")) ? `<button class="btn btn-primaire btn-s" data-action="nouvelle-tache">
                     <svg class="icone-s" aria-hidden="true"><use href="#i-plus"></use></svg> Créer une tâche</button>` : "");
         }
         return `<div class="anime-liste">${taches.map(ligneTacheHTML).join("")}</div>`;
@@ -3572,14 +3598,22 @@ function ligneTacheHTML(tache) {
             ${meta ? `<div class="ligne-meta">${esc(meta)}</div>` : ""}
         </div>
         ${personne ? avatarHTML(personne, "avatar-s") : ""}
-        ${peutEcrire() ? `<div class="ligne-actions parent-seulement">
-            <button class="btn-icone petit" data-modifier-tache="${esc(tache.id)}" aria-label="Modifier ${esc(tache.nom)}">
-                <svg class="icone-s" aria-hidden="true"><use href="#i-crayon"></use></svg></button>
-            <button class="btn-icone petit danger" data-supprimer-tache="${esc(tache.id)}" aria-label="Supprimer ${esc(tache.nom)}">
-                <svg class="icone-s" aria-hidden="true"><use href="#i-corbeille"></use></svg></button>
+        ${(peutModifierTache(tache) || peutSupprimerTache(tache)) ? `<div class="ligne-actions">
+            ${peutModifierTache(tache) ? `<button class="btn-icone petit" data-modifier-tache="${esc(tache.id)}" aria-label="Modifier ${esc(tache.nom)}">
+                <svg class="icone-s" aria-hidden="true"><use href="#i-crayon"></use></svg></button>` : ""}
+            ${peutSupprimerTache(tache) ? `<button class="btn-icone petit danger" data-supprimer-tache="${esc(tache.id)}" aria-label="Supprimer ${esc(tache.nom)}">
+                <svg class="icone-s" aria-hidden="true"><use href="#i-corbeille"></use></svg></button>` : ""}
         </div>` : ""}
     </div>`;
 }
+
+/** Modifier/supprimer une tâche : toujours permis à un parent ; pour un enfant, seulement
+ *  si le parent a coché la permission — sur ses propres tâches (assignées à lui) ou sur
+ *  toutes, selon la permission accordée. */
+const peutModifierTache = tache =>
+    peutEcrire() || enfantA("taches_modifier_autres") || (enfantA("taches_modifier_propres") && estAMoiEnfant(tache));
+const peutSupprimerTache = tache =>
+    peutEcrire() || enfantA("taches_supprimer_autres") || (enfantA("taches_supprimer_propres") && estAMoiEnfant(tache));
 
 const champsTache = () => [
     { id: "nom", label: "Titre de la tâche", type: "texte", requis: true, placeholder: "Sortir les poubelles" },
@@ -3594,7 +3628,7 @@ const champsTache = () => [
 ];
 
 function nouvelleTache(nomPrerempli = "") {
-    if (!peutEcrire()) return;
+    if (!peutEcrire() && !enfantA("taches_creer")) return;
     ouvrirFormulaire({
         titre: "Nouvelle tâche",
         champs: champsTache(),
@@ -3609,7 +3643,7 @@ function nouvelleTache(nomPrerempli = "") {
                 assigneA: valeurs.assigneA || "",
                 assigneNom: nomPersonne(valeurs.assigneA),
                 fait: false, faitLe: ""
-            });
+            }, enfantA("taches_creer"));
             if (id) toast("Tâche créée");
         }
     });
@@ -3617,7 +3651,7 @@ function nouvelleTache(nomPrerempli = "") {
 
 function modifierTache(id) {
     const tache = Etat.donnees.taches.find(t => t.id === id);
-    if (!tache || !peutEcrire()) return;
+    if (!tache || !peutModifierTache(tache)) return;
     ouvrirFormulaire({
         titre: "Modifier la tâche",
         champs: champsTache(),
@@ -3647,11 +3681,12 @@ async function basculerTache(id) {
 
 async function supprimerTache(id) {
     const tache = Etat.donnees.taches.find(t => t.id === id);
+    if (!tache || !peutSupprimerTache(tache)) return;
     const ok = await confirmer({
         titre: "Supprimer la tâche", message: `« ${tache?.nom || ""} » sera supprimée pour tout le monde.`,
         texteConfirmer: "Supprimer", danger: true
     });
-    if (ok && await Donnees.supprimer("taches", id)) toast("Tâche supprimée");
+    if (ok && await Donnees.supprimer("taches", id, peutSupprimerTache(tache))) toast("Tâche supprimée");
 }
 
 $("#formTacheRapide").addEventListener("submit", async e => {
@@ -3664,7 +3699,7 @@ $("#formTacheRapide").addEventListener("submit", async e => {
         nom, date: isoDate(aujourdhui()), assigneA: "", assigneNom: "", priorite: "normale",
         statut: "afaire", description: "", categorie: "", heureLimite: "",
         recurrence: { type: "aucune", jours: [] }, fait: false, faitLe: ""
-    });
+    }, enfantA("taches_creer"));
     if (id) toast("Tâche ajoutée", "succes", { texte: "Détailler", onClic: () => modifierTache(id) });
 });
 
@@ -3672,6 +3707,7 @@ $("#formTacheRapide").addEventListener("submit", async e => {
 
 function rendreCourses() {
     rendreDemandesCourses();
+    $("#formCourseRapide").classList.toggle("cachee", !(peutEcrire() || enfantA("courses_creer")));
     const listes = toutesLesListes();
     if (!listes.find(l => l.id === Etat.ui.listeActive)) Etat.ui.listeActive = "semaine";
 
@@ -3679,7 +3715,7 @@ function rendreCourses() {
         `<button class="puce" role="tab" data-liste="${esc(l.id)}" aria-pressed="${Etat.ui.listeActive === l.id}">
             ${esc(l.nom)}<span class="badge" style="padding:0 6px">${articlesListe(l.id).filter(a => !a.achete).length}</span>
         </button>`).join("")
-        + (peutEcrire() ? `<button class="puce" data-action="nouvelle-liste" aria-label="Créer une liste">
+        + ((peutEcrire() || enfantA("courses_creer")) ? `<button class="puce" data-action="nouvelle-liste" aria-label="Créer une liste">
             <svg class="icone-s" aria-hidden="true"><use href="#i-plus"></use></svg></button>` : "");
 
     const liste = listeParId(Etat.ui.listeActive);
@@ -3729,11 +3765,11 @@ function ligneArticleHTML(article) {
             <div class="ligne-titre">${esc(article.nom)}</div>
             ${meta ? `<div class="ligne-meta">${esc(meta)}</div>` : ""}
         </div>
-        ${peutEcrire() ? `<div class="ligne-actions parent-seulement">
-            <button class="btn-icone petit" data-modifier-article="${esc(article.id)}" aria-label="Modifier ${esc(article.nom)}">
-                <svg class="icone-s" aria-hidden="true"><use href="#i-crayon"></use></svg></button>
-            <button class="btn-icone petit danger" data-supprimer-article="${esc(article.id)}" aria-label="Supprimer ${esc(article.nom)}">
-                <svg class="icone-s" aria-hidden="true"><use href="#i-corbeille"></use></svg></button>
+        ${(peutEcrire() || enfantA("courses_modifier") || enfantA("courses_supprimer")) ? `<div class="ligne-actions">
+            ${(peutEcrire() || enfantA("courses_modifier")) ? `<button class="btn-icone petit" data-modifier-article="${esc(article.id)}" aria-label="Modifier ${esc(article.nom)}">
+                <svg class="icone-s" aria-hidden="true"><use href="#i-crayon"></use></svg></button>` : ""}
+            ${(peutEcrire() || enfantA("courses_supprimer")) ? `<button class="btn-icone petit danger" data-supprimer-article="${esc(article.id)}" aria-label="Supprimer ${esc(article.nom)}">
+                <svg class="icone-s" aria-hidden="true"><use href="#i-corbeille"></use></svg></button>` : ""}
         </div>` : ""}
     </div>`;
 }
@@ -3750,7 +3786,7 @@ async function ajouterArticle(nom, listeId = Etat.ui.listeActive, extra = {}) {
         nom, quantite: "", categorie: "Autre", note: "", achete: false,
         ajoutePar: moiId(), ajouteParNom: monNom(), dateAjout: Date.now(),
         ...champsListe, ...extra
-    });
+    }, enfantA("courses_creer"));
 }
 
 $("#formCourseRapide").addEventListener("submit", async e => {
@@ -3782,7 +3818,7 @@ async function basculerArticle(id) {
 
 function modifierArticle(id) {
     const article = articlesListe(Etat.ui.listeActive).find(a => a.id === id);
-    if (!article || !peutEcrire()) return;
+    if (!article || (!peutEcrire() && !enfantA("courses_modifier"))) return;
     ouvrirFormulaire({
         titre: "Modifier le produit",
         champs: [
@@ -3801,8 +3837,9 @@ function modifierArticle(id) {
 }
 
 async function supprimerArticle(id) {
+    if (!peutEcrire() && !enfantA("courses_supprimer")) return;
     const { collection: nomCollection } = cibleArticle();
-    if (await Donnees.supprimer(nomCollection, id)) toast("Produit retiré");
+    if (await Donnees.supprimer(nomCollection, id, enfantA("courses_supprimer"))) toast("Produit retiré");
 }
 
 async function viderAchetes() {
@@ -3819,13 +3856,14 @@ async function viderAchetes() {
 }
 
 function nouvelleListe() {
+    if (!peutEcrire() && !enfantA("courses_creer")) return;
     ouvrirFormulaire({
         titre: "Nouvelle liste",
         description: "Pharmacie, bricolage, cadeaux…",
         champs: [{ id: "nom", label: "Nom de la liste", type: "texte", requis: true, placeholder: "Pharmacie" }],
         texteValider: "Créer",
         async onValider(valeurs) {
-            const id = await Donnees.ajouter("listes", { nom: valeurs.nom });
+            const id = await Donnees.ajouter("listes", { nom: valeurs.nom }, enfantA("courses_creer"));
             if (id) { Etat.ui.listeActive = id; toast("Liste créée"); rendreCourses(); }
         }
     });
@@ -3969,7 +4007,7 @@ function ouvrirRepas(iso, typeId) {
     const typeNom = TYPES_REPAS.find(t => t.id === typeId)?.nom || "Repas";
 
     if (!existant) return editerRepas(iso, typeId, null);
-    if (!peutEcrire()) {
+    if (!peutEcrire() && !enfantA("repas_modifier") && !enfantA("repas_supprimer")) {
         return ouvrirModale({
             titre: existant.nom, description: `${typeNom} — ${formatDateIso(iso)}`, masquerPied: true,
             corps: `<p class="texte-doux" style="white-space:pre-wrap;padding-bottom:var(--espace-5)">${esc(existant.description || existant.recette || "Bon appétit !")}</p>`
@@ -3996,10 +4034,10 @@ function ouvrirRepas(iso, typeId) {
                     <svg class="icone-s" aria-hidden="true"><use href="#i-courses"></use></svg> Ajouter les ingrédients aux courses
                 </button>` : `<p class="aide">Aucun ingrédient renseigné pour ce repas.</p>`}
             <div class="rangee" style="margin:var(--espace-4) 0 var(--espace-5)">
-                <button class="btn btn-contour" data-modifier-repas="${esc(existant.id)}">
-                    <svg class="icone-s" aria-hidden="true"><use href="#i-crayon"></use></svg> Modifier</button>
-                <button class="btn btn-danger pousse" data-supprimer-repas="${esc(existant.id)}">
-                    <svg class="icone-s" aria-hidden="true"><use href="#i-corbeille"></use></svg> Supprimer</button>
+                ${(peutEcrire() || enfantA("repas_modifier")) ? `<button class="btn btn-contour" data-modifier-repas="${esc(existant.id)}">
+                    <svg class="icone-s" aria-hidden="true"><use href="#i-crayon"></use></svg> Modifier</button>` : ""}
+                ${(peutEcrire() || enfantA("repas_supprimer")) ? `<button class="btn btn-danger pousse" data-supprimer-repas="${esc(existant.id)}">
+                    <svg class="icone-s" aria-hidden="true"><use href="#i-corbeille"></use></svg> Supprimer</button>` : ""}
             </div>`,
         onMonte(boite, fermer) {
             boite.addEventListener("click", async e => {
@@ -4007,8 +4045,9 @@ function ouvrirRepas(iso, typeId) {
                 if (e.target.closest("[data-modifier-repas]")) { fermer(null); editerRepas(iso, typeId, existant); }
                 if (e.target.closest("[data-supprimer-repas]")) {
                     fermer(null);
+                    if (!peutEcrire() && !enfantA("repas_supprimer")) return;
                     if (await confirmer({ titre: "Supprimer le repas", message: `« ${existant.nom} » sera retiré du planning.`, texteConfirmer: "Supprimer", danger: true })) {
-                        if (await Donnees.supprimer("repas", existant.id)) toast("Repas supprimé");
+                        if (await Donnees.supprimer("repas", existant.id, enfantA("repas_supprimer"))) toast("Repas supprimé");
                     }
                 }
             });
@@ -4017,7 +4056,8 @@ function ouvrirRepas(iso, typeId) {
 }
 
 function editerRepas(iso, typeId, existant) {
-    if (!peutEcrire()) return;
+    const autorise = existant ? (peutEcrire() || enfantA("repas_modifier")) : (peutEcrire() || enfantA("repas_creer"));
+    if (!autorise) return;
     const typeNom = TYPES_REPAS.find(t => t.id === typeId)?.nom || "Repas";
     ouvrirFormulaire({
         titre: existant ? "Modifier le repas" : "Nouveau repas",
@@ -4034,7 +4074,7 @@ function editerRepas(iso, typeId, existant) {
         async onValider(valeurs) {
             const donnees = { ...valeurs, date: iso, type: typeId, responsable: valeurs.responsable || "" };
             if (existant) { await Donnees.modifier("repas", existant.id, donnees); toast("Repas mis à jour"); }
-            else if (await Donnees.ajouter("repas", donnees)) toast("Repas ajouté au planning");
+            else if (await Donnees.ajouter("repas", donnees, enfantA("repas_creer"))) toast("Repas ajouté au planning");
         }
     });
 }
@@ -4125,7 +4165,7 @@ function rendreEvenementsImportants() {
         if (!prochains.length) {
             return etatVideHTML("i-evenements", "Aucune date importante",
                 "Anniversaires, fêtes, dates à ne pas oublier : ajoutez-les ici et elles apparaîtront dans le calendrier.",
-                peutEcrire() ? `<button class="btn btn-primaire btn-s" data-action="nouvel-evenement-important">
+                (peutEcrire() || enfantA("evenements_creer")) ? `<button class="btn btn-primaire btn-s" data-action="nouvel-evenement-important">
                     <svg class="icone-s" aria-hidden="true"><use href="#i-plus"></use></svg> Ajouter une date</button>` : "");
         }
         return `<div class="anime-liste">${prochains.map(({ evenement, dateProchaine, dans }) => {
@@ -4141,11 +4181,11 @@ function rendreEvenementsImportants() {
                         ${evenement.recurrenceAnnuelle !== false ? " · chaque année" : ""}</div>
                 </div>
                 <span class="badge ${dans <= 7 ? "badge-accent" : ""}">${dans === 0 ? "Aujourd'hui" : dans === 1 ? "Demain" : `Dans ${dans} j`}</span>
-                ${peutEcrire() ? `<div class="ligne-actions parent-seulement">
-                    <button class="btn-icone petit" data-modifier-important="${esc(evenement.id)}" aria-label="Modifier ${esc(evenement.titre)}">
-                        <svg class="icone-s" aria-hidden="true"><use href="#i-crayon"></use></svg></button>
-                    <button class="btn-icone petit danger" data-supprimer-important="${esc(evenement.id)}" aria-label="Supprimer ${esc(evenement.titre)}">
-                        <svg class="icone-s" aria-hidden="true"><use href="#i-corbeille"></use></svg></button>
+                ${(peutEcrire() || enfantA("evenements_modifier") || enfantA("evenements_supprimer")) ? `<div class="ligne-actions">
+                    ${(peutEcrire() || enfantA("evenements_modifier")) ? `<button class="btn-icone petit" data-modifier-important="${esc(evenement.id)}" aria-label="Modifier ${esc(evenement.titre)}">
+                        <svg class="icone-s" aria-hidden="true"><use href="#i-crayon"></use></svg></button>` : ""}
+                    ${(peutEcrire() || enfantA("evenements_supprimer")) ? `<button class="btn-icone petit danger" data-supprimer-important="${esc(evenement.id)}" aria-label="Supprimer ${esc(evenement.titre)}">
+                        <svg class="icone-s" aria-hidden="true"><use href="#i-corbeille"></use></svg></button>` : ""}
                 </div>` : ""}
             </div>`;
         }).join("")}</div>`;
@@ -4162,14 +4202,14 @@ const champsImportant = () => [
 ];
 
 function nouvelEvenementImportant() {
-    if (!peutEcrire()) return;
+    if (!peutEcrire() && !enfantA("evenements_creer")) return;
     ouvrirFormulaire({
         titre: "Nouvelle date importante",
         champs: champsImportant(),
         valeurs: { date: isoDate(aujourdhui()), recurrenceAnnuelle: true },
         texteValider: "Ajouter",
         async onValider(valeurs) {
-            const id = await Donnees.ajouter("evenementsImportants", valeurs);
+            const id = await Donnees.ajouter("evenementsImportants", valeurs, enfantA("evenements_creer"));
             if (id) {
                 toast("Date enregistrée");
                 notifierParents({
@@ -4183,7 +4223,7 @@ function nouvelEvenementImportant() {
 
 function modifierEvenementImportant(id) {
     const evenement = Etat.donnees.evenementsImportants.find(e => e.id === id);
-    if (!evenement || !peutEcrire()) return;
+    if (!evenement || (!peutEcrire() && !enfantA("evenements_modifier"))) return;
     ouvrirFormulaire({
         titre: "Modifier la date", champs: champsImportant(), valeurs: evenement,
         async onValider(valeurs) {
@@ -4280,10 +4320,11 @@ function bulleHTML(message, groupe) {
         <div class="pied">
             <span>${formatHeureMessage(message.dateCreation)}</span>
             ${message.important ? `<span class="badge badge-danger" style="font-size:10px">Important</span>` : ""}
-            ${groupe && (mienne || estAdmin()) ? `
+            ${groupe && (mienne || estAdmin() || enfantA("messages_epingler")) ? `
                 <button class="btn-icone petit" data-epingler-message="${esc(message.id)}"
                     aria-label="${message.epingle ? "Désépingler" : "Épingler"} ce message">
-                    <svg class="icone-s" aria-hidden="true"><use href="#i-epingle"></use></svg></button>
+                    <svg class="icone-s" aria-hidden="true"><use href="#i-epingle"></use></svg></button>` : ""}
+            ${groupe && (mienne || estAdmin() || enfantA("messages_supprimer_autres")) ? `
                 <button class="btn-icone petit" data-supprimer-message="${esc(message.id)}" aria-label="Supprimer ce message">
                     <svg class="icone-s" aria-hidden="true"><use href="#i-corbeille"></use></svg></button>` : ""}
         </div>
@@ -4660,7 +4701,7 @@ function rendreRoutines() {
         if (!duJour.length && !autres.length) {
             return etatVideHTML("i-routines", "Aucune routine",
                 "Routine du matin, du soir, des devoirs : créez une liste d'étapes réutilisable chaque jour.",
-                peutEcrire() ? `<button class="btn btn-primaire btn-s" data-action="nouvelle-routine">
+                (peutEcrire() || enfantA("routines_creer")) ? `<button class="btn btn-primaire btn-s" data-action="nouvelle-routine">
                     <svg class="icone-s" aria-hidden="true"><use href="#i-plus"></use></svg> Créer une routine</button>` : "");
         }
 
@@ -4699,10 +4740,11 @@ function carteRoutineHTML(routine, active) {
             <div class="rangee" style="gap:var(--espace-2)">
                 ${routine.actif === false ? `<span class="badge">Désactivée</span>` : ""}
                 ${personne ? avatarHTML(personne, "avatar-s") : ""}
-                ${peutEcrire() ? `
-                    <button class="btn-icone petit parent-seulement" data-modifier-routine="${esc(routine.id)}" aria-label="Modifier ${esc(routine.nom)}">
-                        <svg class="icone-s" aria-hidden="true"><use href="#i-crayon"></use></svg></button>
-                    <button class="btn-icone petit danger parent-seulement" data-supprimer-routine="${esc(routine.id)}" aria-label="Supprimer ${esc(routine.nom)}">
+                ${(peutEcrire() || enfantA("routines_modifier")) ? `
+                    <button class="btn-icone petit" data-modifier-routine="${esc(routine.id)}" aria-label="Modifier ${esc(routine.nom)}">
+                        <svg class="icone-s" aria-hidden="true"><use href="#i-crayon"></use></svg></button>` : ""}
+                ${(peutEcrire() || enfantA("routines_supprimer")) ? `
+                    <button class="btn-icone petit danger" data-supprimer-routine="${esc(routine.id)}" aria-label="Supprimer ${esc(routine.nom)}">
                         <svg class="icone-s" aria-hidden="true"><use href="#i-corbeille"></use></svg></button>` : ""}
             </div>
         </div>
@@ -4738,7 +4780,7 @@ const champsRoutine = () => [
 ];
 
 function nouvelleRoutine() {
-    if (!peutEcrire()) return;
+    if (!peutEcrire() && !enfantA("routines_creer")) return;
     ouvrirFormulaire({
         titre: "Nouvelle routine",
         champs: champsRoutine(),
@@ -4748,14 +4790,14 @@ function nouvelleRoutine() {
         },
         texteValider: "Créer",
         async onValider(valeurs) {
-            if (await Donnees.ajouter("routines", { ...valeurs, progression: {} })) toast("Routine créée");
+            if (await Donnees.ajouter("routines", { ...valeurs, progression: {} }, enfantA("routines_creer"))) toast("Routine créée");
         }
     });
 }
 
 function modifierRoutine(id) {
     const routine = Etat.donnees.routines.find(r => r.id === id);
-    if (!routine || !peutEcrire()) return;
+    if (!routine || (!peutEcrire() && !enfantA("routines_modifier"))) return;
     ouvrirFormulaire({
         titre: "Modifier la routine",
         champs: champsRoutine(),
@@ -4918,6 +4960,8 @@ function rendreFamille() {
                         <div class="ligne-meta">Se connecte avec le code enfant</div>
                     </div>
                     <div class="ligne-actions">
+                        <button class="btn-icone petit" data-permissions-enfant="${esc(enfant.id)}" aria-label="Gérer les permissions de ${esc(enfant.nom)}">
+                            <svg class="icone-s" aria-hidden="true"><use href="#i-bouclier"></use></svg></button>
                         <button class="btn-icone petit" data-modifier-enfant="${esc(enfant.id)}" aria-label="Modifier ${esc(enfant.nom)}">
                             <svg class="icone-s" aria-hidden="true"><use href="#i-crayon"></use></svg></button>
                         <button class="btn-icone petit danger" data-supprimer-enfant="${esc(enfant.id)}" aria-label="Supprimer ${esc(enfant.nom)}">
@@ -4976,7 +5020,7 @@ function rendreProfil() {
                 </div>
             </section>
             <div class="carte">
-                <p class="texte-doux">Tu es connecté en tant qu'enfant. Tu peux cocher tes tâches, tes courses et tes routines.</p>
+                <p class="texte-doux">Tu es connecté en tant qu'enfant. Tes parents décident de ce que tu peux faire en plus de consulter, cocher et écrire dans le groupe.</p>
                 <button class="btn btn-contour btn-bloc" data-action="quitter-famille" style="margin-top:var(--espace-3)">Changer de maison</button>
             </div>`
         : `
@@ -5171,6 +5215,87 @@ function changerCodeEnfant() {
             // On réaffiche le code exact enregistré : plus simple à recopier pour le
             // transmettre à l'enfant que de se fier à ce qu'on a tapé de mémoire.
             await alerter("Code enfant enregistré", `Donnez ce code à l'enfant, tel quel : « ${code} »`);
+        }
+    });
+}
+
+/** Catalogue des permissions qu'un parent peut accorder à un enfant, par catégorie.
+ *  Tout est FERMÉ par défaut (absent de enfants/{id}.permissions == false) : un enfant
+ *  n'est pas condamné à la lecture seule, mais rien de sensible n'est ouvert sans que
+ *  ce soit coché ici — voir firestore.rules (fonctions enfantA/enfantActuelId) pour la
+ *  vraie barrière de sécurité, cette liste ne fait que refléter la même chose côté UI.
+ *  Reste toujours permis sans case à cocher (comportement inchangé) : consulter ce qui
+ *  est visible, terminer ses tâches/étapes de routine, demander un produit aux courses,
+ *  écrire/gérer ses propres messages dans le groupe, modifier sa couleur et sa photo. */
+const PERMISSIONS_ENFANT = [
+    { categorie: "📅 Calendrier", cles: [
+        { id: "calendrier_creer", label: "Ajouter un événement ou un cours" },
+        { id: "calendrier_modifier", label: "Modifier un événement (n'importe lequel)" },
+        { id: "calendrier_supprimer", label: "Supprimer un événement (n'importe lequel)" }
+    ]},
+    { categorie: "✅ Tâches", cles: [
+        { id: "taches_creer", label: "Créer une tâche" },
+        { id: "taches_modifier_propres", label: "Modifier ses propres tâches (assignées à lui/elle)" },
+        { id: "taches_supprimer_propres", label: "Supprimer ses propres tâches" },
+        { id: "taches_modifier_autres", label: "Modifier les tâches des autres" },
+        { id: "taches_supprimer_autres", label: "Supprimer les tâches des autres" }
+    ]},
+    { categorie: "🛒 Courses", cles: [
+        { id: "courses_creer", label: "Ajouter directement un produit à une liste (sans passer par une demande)" },
+        { id: "courses_modifier", label: "Modifier les produits d'une liste" },
+        { id: "courses_supprimer", label: "Supprimer les produits d'une liste" }
+    ]},
+    { categorie: "💬 Discussion", cles: [
+        { id: "messages_epingler", label: "Épingler un message, même celui de quelqu'un d'autre" },
+        { id: "messages_supprimer_autres", label: "Supprimer les messages des autres" }
+    ]},
+    { categorie: "🍽️ Repas", cles: [
+        { id: "repas_creer", label: "Ajouter un repas au planning" },
+        { id: "repas_modifier", label: "Modifier un repas" },
+        { id: "repas_supprimer", label: "Supprimer un repas" }
+    ]},
+    { categorie: "🎂 Événements importants", cles: [
+        { id: "evenements_creer", label: "Ajouter une date importante" },
+        { id: "evenements_modifier", label: "Modifier une date importante" },
+        { id: "evenements_supprimer", label: "Supprimer une date importante" }
+    ]},
+    { categorie: "🔄 Routines", cles: [
+        { id: "routines_creer", label: "Créer une routine" },
+        { id: "routines_modifier", label: "Modifier une routine" },
+        { id: "routines_supprimer", label: "Supprimer une routine" }
+    ]}
+];
+
+function gererPermissionsEnfant(enfantId) {
+    const enfant = Etat.donnees.enfants.find(e => e.id === enfantId);
+    if (!enfant) return;
+    const actuelles = enfant.permissions || {};
+    const corps = `
+        <p class="texte-doux" style="margin:0 0 var(--espace-4);font-size:var(--taille-s)">
+            ${esc(enfant.nom)} peut déjà, sans rien cocher : consulter le calendrier/tâches/courses/repas,
+            terminer ses propres tâches et étapes de routine, demander un produit aux courses, écrire dans
+            le groupe familial et gérer ses propres messages, modifier sa couleur et sa photo. Cochez ici
+            ce qu'il ou elle peut faire en plus — rien n'est ouvert par défaut.
+        </p>
+        ${PERMISSIONS_ENFANT.map(section => `
+            <div style="margin-bottom:var(--espace-4)">
+                <h4 style="margin:0 0 var(--espace-2)">${esc(section.categorie)}</h4>
+                ${section.cles.map(c => `
+                    <label class="rangee" style="gap:var(--espace-2);font-weight:600;padding:4px 0">
+                        <input type="checkbox" data-permission="${esc(c.id)}" ${actuelles[c.id] === true ? "checked" : ""}>
+                        ${esc(c.label)}
+                    </label>`).join("")}
+            </div>`).join("")}`;
+    ouvrirModale({
+        titre: `Permissions de ${enfant.nom}`,
+        description: "La vraie barrière de sécurité est appliquée côté serveur, pas seulement ici.",
+        corps,
+        texteValider: "Enregistrer",
+        async onValider(boite) {
+            const permissions = {};
+            $$("[data-permission]", boite).forEach(input => { permissions[input.dataset.permission] = input.checked; });
+            await Donnees.modifier("enfants", enfantId, { permissions });
+            toast("Permissions mises à jour");
         }
     });
 }
@@ -5542,9 +5667,10 @@ const GESTIONNAIRES = {
     repasCreneau:         valeur => { const [iso, type] = valeur.split("|"); ouvrirRepas(iso, type); },
     modifierImportant:    valeur => modifierEvenementImportant(valeur),
     supprimerImportant:   async valeur => {
+        if (!peutEcrire() && !enfantA("evenements_supprimer")) return;
         const evenement = Etat.donnees.evenementsImportants.find(e => e.id === valeur);
         if (await confirmer({ titre: "Supprimer la date", message: `« ${evenement?.titre || ""} » sera supprimée.`, texteConfirmer: "Supprimer", danger: true })) {
-            if (await Donnees.supprimer("evenementsImportants", valeur)) toast("Date supprimée");
+            if (await Donnees.supprimer("evenementsImportants", valeur, enfantA("evenements_supprimer"))) toast("Date supprimée");
         }
     },
     epinglerMessage:      async valeur => {
@@ -5570,15 +5696,17 @@ const GESTIONNAIRES = {
     etapeRoutine:         valeur => { const [routine, etape] = valeur.split("|"); basculerEtapeRoutine(routine, etape); },
     modifierRoutine:      valeur => modifierRoutine(valeur),
     supprimerRoutine:     async valeur => {
+        if (!peutEcrire() && !enfantA("routines_supprimer")) return;
         const routine = Etat.donnees.routines.find(r => r.id === valeur);
         if (await confirmer({ titre: "Supprimer la routine", message: `« ${routine?.nom || ""} » et ses étapes seront supprimées.`, texteConfirmer: "Supprimer", danger: true })) {
-            if (await Donnees.supprimer("routines", valeur)) toast("Routine supprimée");
+            if (await Donnees.supprimer("routines", valeur, enfantA("routines_supprimer"))) toast("Routine supprimée");
         }
     },
     roleMembre:           valeur => gererAccesMembre(valeur),
     retirerMembre:        valeur => retirerMembre(valeur),
     modifierEnfant:       valeur => modifierEnfant(valeur),
     supprimerEnfant:      valeur => supprimerEnfant(valeur),
+    permissionsEnfant:    valeur => gererPermissionsEnfant(valeur),
     changerMaison:        valeur => {
         const [id, nom, proprietaire] = valeur.split("|");
         pileModales.at(-1)?.(null);
@@ -5608,8 +5736,15 @@ document.addEventListener("click", async e => {
     const carteEnfant = e.target.closest("[data-enfant][data-famille-nom]");
     if (carteEnfant) {
         const { famille: familleId, familleNom, enfant: enfantId, enfantNom } = carteEnfant.dataset;
-        updateDoc(doc(db, "maisons", familleId, "enfants", enfantId), { uidActuel: auth.currentUser.uid })
-            .catch(erreur => console.warn("Claim d'identité enfant impossible :", erreur.code));
+        // Ordre important : l'enfant ne peut poser enfantIdActuel sur enfantsVerifies que
+        // si enfants/{id}.uidActuel le désigne déjà (voir firestore.rules) — d'où l'attente
+        // ici avant le second appel, plutôt que deux écritures en parallèle.
+        (async () => {
+            try {
+                await updateDoc(doc(db, "maisons", familleId, "enfants", enfantId), { uidActuel: auth.currentUser.uid });
+                await updateDoc(doc(db, "maisons", familleId, "enfantsVerifies", auth.currentUser.uid), { enfantIdActuel: enfantId });
+            } catch (erreur) { console.warn("Claim d'identité enfant impossible :", erreur.code); }
+        })();
         retenirMaisonEnfant(familleId, familleNom, enfantId, enfantNom);
         entrerDansFamille(familleId, familleNom, null, "enfant", enfantId, enfantNom);
         return;

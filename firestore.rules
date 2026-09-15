@@ -8,8 +8,12 @@ rules_version = '2';
      - Un utilisateur ne peut lire/écrire QUE dans les familles dont il
        est membre (ou enfant vérifié).
      - Un enfant n'a pas de compte : il est identifié par une session anonyme
-       validée par le code enfant, et ne peut que COCHER (jamais créer,
-       jamais supprimer).
+       validée par le code enfant. Il n'est PAS condamné à la lecture seule :
+       cocher ses propres tâches/étapes, demander un produit aux courses,
+       écrire dans le groupe et gérer sa couleur/photo restent toujours permis ;
+       créer/modifier/supprimer dans les autres collections dépend de permissions
+       granulaires accordées au cas par cas par un parent (enfants/{id}.permissions,
+       tout fermé par défaut — voir enfantA()).
      - Un membre "restreint" A un compte (e-mail ou Google), mais n'a accès
        qu'aux fonctionnalités cochées dans profils/{uid}.permissions — c'est
        la version "rétrogradée façon enfant, mais avec un vrai compte".
@@ -75,6 +79,23 @@ service cloud.firestore {
       return estEnfantVerifie(maisonId)
         && get(/databases/$(database)/documents/maisons/$(maisonId)/enfants/$(enfantId)).data.uidActuel
            == request.auth.uid;
+    }
+
+    /** Id de l'enfant actuellement incarné par cette session anonyme (posé sur
+     *  enfantsVerifies au moment du choix d'identité, en plus de enfants/{id}.uidActuel :
+     *  un lookup direct par uid, impossible à obtenir par une requête inverse en règles). */
+    function enfantActuelId(maisonId) {
+      return get(/databases/$(database)/documents/maisons/$(maisonId)/enfantsVerifies/$(request.auth.uid))
+        .data.get('enfantIdActuel', null);
+    }
+
+    /** Permission granulaire accordée par un parent à l'enfant actuellement connecté
+     *  (enfants/{id}.permissions, tout fermé par défaut — voir PERMISSIONS_ENFANT côté client). */
+    function enfantA(maisonId, cle) {
+      return estEnfantVerifie(maisonId)
+        && enfantActuelId(maisonId) != null
+        && get(/databases/$(database)/documents/maisons/$(maisonId)/enfants/$(enfantActuelId(maisonId)))
+             .data.get('permissions', {}).get(cle, false) == true;
     }
 
     function aAcces(maisonId) {
@@ -155,7 +176,13 @@ service cloud.firestore {
           && request.resource.data.codeSaisi
              == get(/databases/$(database)/documents/maisons/$(maisonId)/prive/secrets).data.codeEnfant;
         allow read: if estConnecte() && (request.auth.uid == enfantUid || estMembre(maisonId));
-        allow update: if false;
+        // Seul champ modifiable : quelle identité enfants/{id} cette session incarne
+        // actuellement — et seulement si cet enfant la désigne déjà via uidActuel
+        // (posé juste avant, voir afficherChoixEnfant), jamais l'inverse.
+        allow update: if request.auth.uid == enfantUid
+          && modifieUniquement(['enfantIdActuel'])
+          && get(/databases/$(database)/documents/maisons/$(maisonId)/enfants/$(request.resource.data.enfantIdActuel))
+               .data.uidActuel == request.auth.uid;
         allow delete: if estMembre(maisonId) || request.auth.uid == enfantUid;
       }
 
@@ -185,47 +212,64 @@ service cloud.firestore {
           || (estCetEnfant(maisonId, docId) && modifieUniquement(['couleur', 'photoURL']));
       }
 
-      /* ---- Calendrier ---- */
+      /* ---- Calendrier : un enfant peut créer/modifier/supprimer si le parent le
+         permission (voir enfantA, jamais un rôle "lecture seule" par défaut). ---- */
       match /evenements/{docId} {
         allow read: if accesFonctionnalite(maisonId, 'calendrier') || estEnfantVerifie(maisonId);
-        allow create, update, delete: if accesFonctionnalite(maisonId, 'calendrier');
+        allow create: if accesFonctionnalite(maisonId, 'calendrier') || enfantA(maisonId, 'calendrier_creer');
+        allow update: if accesFonctionnalite(maisonId, 'calendrier') || enfantA(maisonId, 'calendrier_modifier');
+        allow delete: if accesFonctionnalite(maisonId, 'calendrier') || enfantA(maisonId, 'calendrier_supprimer');
       }
 
-      /* ---- Tâches : un enfant peut seulement cocher ---- */
+      /* ---- Tâches : cocher reste toujours permis ; créer/modifier/supprimer
+         dépendent des permissions accordées (propres = assigneA == l'enfant). ---- */
       match /taches/{docId} {
         allow read: if accesFonctionnalite(maisonId, 'taches') || estEnfantVerifie(maisonId);
-        allow create, delete: if accesFonctionnalite(maisonId, 'taches');
+        allow create: if accesFonctionnalite(maisonId, 'taches') || enfantA(maisonId, 'taches_creer');
         allow update: if accesFonctionnalite(maisonId, 'taches')
-          || enfantCoche(maisonId, ['fait', 'dateFait', 'faitLe', 'dateModification']);
+          || enfantCoche(maisonId, ['fait', 'dateFait', 'faitLe', 'dateModification'])
+          || enfantA(maisonId, 'taches_modifier_autres')
+          || (enfantA(maisonId, 'taches_modifier_propres') && resource.data.assigneA == enfantActuelId(maisonId));
+        allow delete: if accesFonctionnalite(maisonId, 'taches')
+          || enfantA(maisonId, 'taches_supprimer_autres')
+          || (enfantA(maisonId, 'taches_supprimer_propres') && resource.data.assigneA == enfantActuelId(maisonId));
       }
 
       /* ---- Courses : liste hebdomadaire intégrée ---- */
       match /coursesSemaine/{docId} {
         allow read: if accesFonctionnalite(maisonId, 'courses') || estEnfantVerifie(maisonId);
-        allow create, delete: if accesFonctionnalite(maisonId, 'courses');
+        allow create: if accesFonctionnalite(maisonId, 'courses') || enfantA(maisonId, 'courses_creer');
         allow update: if accesFonctionnalite(maisonId, 'courses')
-          || enfantCoche(maisonId, ['achete', 'dateAchat', 'dateModification']);
+          || enfantCoche(maisonId, ['achete', 'dateAchat', 'dateModification'])
+          || enfantA(maisonId, 'courses_modifier');
+        allow delete: if accesFonctionnalite(maisonId, 'courses') || enfantA(maisonId, 'courses_supprimer');
       }
 
       /* ---- Courses : achats ponctuels intégrés ---- */
       match /achatsSpecifiques/{docId} {
         allow read: if accesFonctionnalite(maisonId, 'courses') || estEnfantVerifie(maisonId);
-        allow create, delete: if accesFonctionnalite(maisonId, 'courses');
+        allow create: if accesFonctionnalite(maisonId, 'courses') || enfantA(maisonId, 'courses_creer');
         allow update: if accesFonctionnalite(maisonId, 'courses')
-          || enfantCoche(maisonId, ['achete', 'dateAchat', 'dateModification']);
+          || enfantCoche(maisonId, ['achete', 'dateAchat', 'dateModification'])
+          || enfantA(maisonId, 'courses_modifier');
+        allow delete: if accesFonctionnalite(maisonId, 'courses') || enfantA(maisonId, 'courses_supprimer');
       }
 
       /* ---- Courses : listes créées par la famille ---- */
       match /listes/{docId} {
         allow read: if accesFonctionnalite(maisonId, 'courses') || estEnfantVerifie(maisonId);
-        allow create, update, delete: if accesFonctionnalite(maisonId, 'courses');
+        allow create: if accesFonctionnalite(maisonId, 'courses') || enfantA(maisonId, 'courses_creer');
+        allow update: if accesFonctionnalite(maisonId, 'courses') || enfantA(maisonId, 'courses_modifier');
+        allow delete: if accesFonctionnalite(maisonId, 'courses') || enfantA(maisonId, 'courses_supprimer');
       }
 
       match /articles/{docId} {
         allow read: if accesFonctionnalite(maisonId, 'courses') || estEnfantVerifie(maisonId);
-        allow create, delete: if accesFonctionnalite(maisonId, 'courses');
+        allow create: if accesFonctionnalite(maisonId, 'courses') || enfantA(maisonId, 'courses_creer');
         allow update: if accesFonctionnalite(maisonId, 'courses')
-          || enfantCoche(maisonId, ['achete', 'dateAchat', 'dateModification']);
+          || enfantCoche(maisonId, ['achete', 'dateAchat', 'dateModification'])
+          || enfantA(maisonId, 'courses_modifier');
+        allow delete: if accesFonctionnalite(maisonId, 'courses') || enfantA(maisonId, 'courses_supprimer');
       }
 
       /* ---- Demandes de courses : un enfant demande, un parent valide. Jamais l'auteur
@@ -248,13 +292,17 @@ service cloud.firestore {
       /* ---- Repas ---- */
       match /repas/{docId} {
         allow read: if accesFonctionnalite(maisonId, 'repas') || estEnfantVerifie(maisonId);
-        allow create, update, delete: if accesFonctionnalite(maisonId, 'repas');
+        allow create: if accesFonctionnalite(maisonId, 'repas') || enfantA(maisonId, 'repas_creer');
+        allow update: if accesFonctionnalite(maisonId, 'repas') || enfantA(maisonId, 'repas_modifier');
+        allow delete: if accesFonctionnalite(maisonId, 'repas') || enfantA(maisonId, 'repas_supprimer');
       }
 
       /* ---- Dates importantes ---- */
       match /evenementsImportants/{docId} {
         allow read: if accesFonctionnalite(maisonId, 'evenements') || estEnfantVerifie(maisonId);
-        allow create, update, delete: if accesFonctionnalite(maisonId, 'evenements');
+        allow create: if accesFonctionnalite(maisonId, 'evenements') || enfantA(maisonId, 'evenements_creer');
+        allow update: if accesFonctionnalite(maisonId, 'evenements') || enfantA(maisonId, 'evenements_modifier');
+        allow delete: if accesFonctionnalite(maisonId, 'evenements') || enfantA(maisonId, 'evenements_supprimer');
       }
 
       /* ---- Messages : chacun gère les siens, l'admin gère tout. Un enfant peut aussi
@@ -266,7 +314,9 @@ service cloud.firestore {
           || estCetEnfant(maisonId, request.resource.data.auteurId);
         allow update, delete: if (accesFonctionnalite(maisonId, 'messages')
             && (resource.data.auteurId == request.auth.uid || estAdmin(maisonId)))
-          || estCetEnfant(maisonId, resource.data.auteurId);
+          || estCetEnfant(maisonId, resource.data.auteurId)
+          || enfantA(maisonId, 'messages_supprimer_autres')
+          || (enfantA(maisonId, 'messages_epingler') && modifieUniquement(['epingle', 'dateModification']));
       }
 
       /* ---- Conversations privées : réservées aux membres ayant accès aux messages,
@@ -298,14 +348,17 @@ service cloud.firestore {
         allow create, update, delete: if accesFonctionnalite(maisonId, 'documents');
       }
 
-      /* ---- Routines : un enfant coche ses étapes du jour ---- */
+      /* ---- Routines : cocher ses étapes reste toujours permis ; créer/modifier/
+         supprimer dépendent des permissions accordées. ---- */
       match /routines/{docId} {
         allow read: if accesFonctionnalite(maisonId, 'routines') || estEnfantVerifie(maisonId);
-        allow create, delete: if accesFonctionnalite(maisonId, 'routines');
+        allow create: if accesFonctionnalite(maisonId, 'routines') || enfantA(maisonId, 'routines_creer');
         allow update: if accesFonctionnalite(maisonId, 'routines')
           || (estEnfantVerifie(maisonId)
               && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['progression', 'dateModification']));
+                 .hasOnly(['progression', 'dateModification']))
+          || enfantA(maisonId, 'routines_modifier');
+        allow delete: if accesFonctionnalite(maisonId, 'routines') || enfantA(maisonId, 'routines_supprimer');
       }
 
       /* ---- Métadonnées (reset hebdomadaire, paramètres) : jamais restreintes ---- */
