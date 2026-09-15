@@ -18,7 +18,8 @@ ni outillage. Ne pas éclater en modules, même si le fichier est gros (~4 700 l
 - HTML/CSS/JS pur, aucune dépendance à installer, aucun build, aucun `package.json`.
 - Firebase (projet `liste-courses-famille-a0096`), chargé par CDN en modules ES :
   Authentication + Firestore (temps réel) + **Storage** (documents familiaux).
-- Hébergement : Netlify (glisser-déposer des fichiers sur https://app.netlify.com/drop).
+- Hébergement : Vercel, relié directement au dépôt GitHub — **redéploiement automatique à chaque
+  push sur `main`**, plus de glisser-déposer manuel. *(Changé depuis Netlify en 2026-09.)*
 
 ## Fichiers
 
@@ -113,8 +114,12 @@ version : ne pas les fusionner dans `articles`, des données réelles y vivent.
 - Authentication → fournisseurs **Email/Password** et **Anonymous** activés. *(déjà fait)*
 - Authentication → fournisseur **Google** : **à activer** dans Authentication → Sign-in method.
   Sans ça, le bouton « Continuer avec Google » échoue avec `auth/operation-not-allowed`.
-- Authentication → Settings → Authorized domains : le domaine Netlify doit y figurer.
-  **À refaire à chaque nouvelle URL Netlify**, sinon la connexion échoue.
+- Authentication → Settings → Authorized domains : le domaine de production Vercel
+  (`....vercel.app`, ou le domaine personnalisé si un jour il y en a un) doit y figurer, sinon la
+  connexion échoue. Comme Vercel redéploie automatiquement à chaque push, le domaine de production
+  reste stable une fois ajouté — pas besoin de le refaire à chaque déploiement. Seules les URLs de
+  **preview** (une par branche/PR) sont différentes et devront être ajoutées séparément si vous testez
+  la connexion dessus.
 - Firestore → Rules : publier le contenu de `firestore.rules`. **À REPUBLIER** — les règles ont changé
   (profils, evenements, listes, articles, repas, evenementsImportants, messages, **conversations**,
   documents, routines).
@@ -159,7 +164,7 @@ couleur en dur dans un composant, toujours réutiliser une variable existante.
 
 - Copier-coller le code depuis une fenêtre de chat a déjà corrompu la clé API Firebase (caractère altéré,
   longueur identique) → erreur `auth/api-key-not-valid`. Toujours transmettre le **fichier**, pas le texte.
-- Ouvrir `index.html` en `file://` ne marche pas : Firebase Auth exige un vrai domaine (serveur local ou Netlify).
+- Ouvrir `index.html` en `file://` ne marche pas : Firebase Auth exige un vrai domaine (serveur local ou Vercel).
 - `[hidden]` est neutralisé par les `display: flex` des composants : la règle
   `.cachee, [hidden] { display: none !important; }` est indispensable.
 - Ne pas recaler le défilement du calendrier à chaque instantané Firestore : utiliser
