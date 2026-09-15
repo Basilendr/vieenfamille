@@ -1,0 +1,11 @@
+# Outillage local de prévisualisation (chemins propres à cette machine)
+.claude/
+
+# macOS
+.DS_Store
+._*
+
+# Éditeurs
+.vscode/
+.idea/
+*.swp

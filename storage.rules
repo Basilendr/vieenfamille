@@ -1,0 +1,39 @@
+rules_version = '2';
+
+/* =============================================================================
+   VIEENFAMILLE — RÈGLES DE SÉCURITÉ FIREBASE STORAGE (documents familiaux)
+
+   Un fichier n'est lisible que par les membres de la famille à laquelle il
+   appartient. L'appartenance est vérifiée en relisant le document Firestore
+   de la famille : impossible de deviner une URL pour accéder aux documents
+   d'une autre famille.
+   ============================================================================= */
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function estMembre(familleId) {
+      return request.auth != null
+        && request.auth.uid in
+           firestore.get(/databases/(default)/documents/maisons/$(familleId)).data.membres;
+    }
+
+    match /familles/{familleId}/documents/{fichier} {
+      allow read: if estMembre(familleId);
+
+      allow write: if estMembre(familleId)
+        && request.resource.size < 15 * 1024 * 1024
+        && request.resource.contentType.matches(
+             'application/pdf|image/.*|text/.*|application/msword'
+             + '|application/vnd.*|application/octet-stream'
+           );
+
+      allow delete: if estMembre(familleId);
+    }
+
+    // Aucun autre chemin n'est accessible.
+    match /{chemin=**} {
+      allow read, write: if false;
+    }
+  }
+}

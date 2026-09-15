@@ -1,0 +1,17 @@
+{
+  "name": "VieEnFamille",
+  "short_name": "VieEnFamille",
+  "description": "Calendrier, tâches, courses, repas, documents et routines de toute la famille, au même endroit.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0B0B14",
+  "theme_color": "#0B0B14",
+  "lang": "fr",
+  "categories": ["productivity", "lifestyle"],
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}
