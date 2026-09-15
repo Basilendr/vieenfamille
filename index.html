@@ -353,9 +353,16 @@ select.saisie {
     width: 36px; height: 36px; flex: none; border-radius: 50%;
     display: inline-flex; align-items: center; justify-content: center;
     font-family: var(--police-titre); font-size: var(--taille-s); font-weight: 700;
-    color: #fff; background: var(--primaire); text-transform: uppercase;
+    color: var(--sur-primaire); background: var(--primaire); text-transform: uppercase;
     border: 2px solid var(--carte); overflow: hidden;
 }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.avatar-photo-conteneur { position: relative; width: fit-content; margin: 0 auto var(--espace-3); }
+.avatar-photo-bouton {
+    position: absolute; bottom: -2px; right: -2px; width: 32px; height: 32px; min-height: 32px;
+    background: var(--primaire); color: var(--sur-primaire); border: 2px solid var(--carte);
+}
+.avatar-photo-bouton:hover:not(:disabled) { background: var(--primaire-hover); color: var(--sur-primaire); }
 .avatar-s { width: 26px; height: 26px; font-size: 11px; }
 .avatar-l { width: 56px; height: 56px; font-size: var(--taille-m); }
 .avatar-xl { width: 84px; height: 84px; font-size: var(--taille-xl); }
@@ -637,6 +644,12 @@ main { display: block; }
     min-height: 100dvh; padding: var(--espace-5) var(--espace-4);
 }
 .boite { width: 100%; max-width: 440px; }
+.logo-centre { display: flex; justify-content: center; margin-bottom: var(--espace-5); }
+.logo-centre .logo {
+    width: 56px; height: 56px; border-radius: var(--rayon-m); background: var(--degrade);
+    display: flex; align-items: center; justify-content: center; color: var(--sur-primaire);
+}
+.logo-centre .logo .icone { width: 30px; height: 30px; }
 
 /* ---- Page de garde ---- */
 .nav-garde {
@@ -1083,6 +1096,7 @@ body.role-enfant .parent-seulement { display: none !important; }
 <div id="ecranAuth" class="ecran">
     <div class="ecran-centre">
         <div class="boite">
+            <div class="logo-centre" aria-hidden="true"><span class="logo"><svg class="icone" aria-hidden="true"><use href="#i-accueil"></use></svg></span></div>
             <button class="btn btn-fantome btn-s" data-action="retour-garde" style="margin-bottom:var(--espace-4)">
                 <svg class="icone-s" aria-hidden="true"><use href="#i-gauche"></use></svg> Retour
             </button>
@@ -1130,6 +1144,7 @@ body.role-enfant .parent-seulement { display: none !important; }
 <div id="ecranFamilles" class="ecran">
     <div class="ecran-centre">
         <div class="boite">
+            <div class="logo-centre" aria-hidden="true"><span class="logo"><svg class="icone" aria-hidden="true"><use href="#i-accueil"></use></svg></span></div>
             <div class="rangee-espacee" style="margin-bottom:var(--espace-4)">
                 <h2>Vos familles</h2>
                 <button class="btn-icone" data-action="deconnexion" aria-label="Se déconnecter" title="Se déconnecter">
@@ -1157,6 +1172,7 @@ body.role-enfant .parent-seulement { display: none !important; }
 <div id="ecranEnfant" class="ecran">
     <div class="ecran-centre">
         <div class="boite">
+            <div class="logo-centre" aria-hidden="true"><span class="logo"><svg class="icone" aria-hidden="true"><use href="#i-accueil"></use></svg></span></div>
             <button class="btn btn-fantome btn-s" data-action="retour-garde" style="margin-bottom:var(--espace-4)">
                 <svg class="icone-s" aria-hidden="true"><use href="#i-gauche"></use></svg> Retour
             </button>
@@ -1189,6 +1205,7 @@ body.role-enfant .parent-seulement { display: none !important; }
 <div id="ecranIntegration" class="ecran">
     <div class="ecran-centre">
         <div class="boite">
+            <div class="logo-centre" aria-hidden="true"><span class="logo"><svg class="icone" aria-hidden="true"><use href="#i-accueil"></use></svg></span></div>
             <div class="etapes-indicateur" aria-hidden="true">
                 <span class="faite"></span><span></span><span></span><span></span>
             </div>
@@ -1444,6 +1461,7 @@ body.role-enfant .parent-seulement { display: none !important; }
 
         <!-- ------------------------------ PROFIL --------------------------- -->
         <section class="page" id="page-profil" tabindex="-1">
+            <input type="file" id="champPhotoProfil" class="invisible-visuel" accept="image/*">
             <div id="contenuProfil"></div>
         </section>
 
@@ -2068,6 +2086,11 @@ const estEnfant  = () => Etat.role === "enfant";
 const estAdmin   = () => Etat.role === "admin";
 const peutEcrire = () => !estEnfant();
 
+/* ---- Accès restreint : un membre avec compte, mais limité à certaines fonctionnalités ---- */
+const estRestreint = () => Etat.role === "restreint";
+/** Une fonctionnalité (clé de FONCTIONNALITES_RESTREIGNABLES) est-elle ouverte à la personne connectée ? */
+const aAccesFonctionnalite = cle => !estRestreint() || Etat.profil?.permissions?.[cle] === true;
+
 /* ---- Références Firestore ---- */
 const refCollection = nom => collection(db, "maisons", Etat.familleId, nom);
 const refDocument   = (nom, id) => doc(db, "maisons", Etat.familleId, nom, id);
@@ -2145,7 +2168,7 @@ const membres = () => Etat.donnees.profils;
 /** Membres + enfants sans compte : tout le monde à qui on peut assigner. */
 function personnes() {
     return [
-        ...Etat.donnees.profils.map(p => ({ id: p.id, nom: p.prenom || "Sans nom", couleur: p.couleur || COULEURS_MEMBRE[0], type: "membre" })),
+        ...Etat.donnees.profils.map(p => ({ id: p.id, nom: p.prenom || "Sans nom", couleur: p.couleur || COULEURS_MEMBRE[0], photoURL: p.photoURL || "", type: "membre" })),
         ...Etat.donnees.enfants.map(e => ({ id: e.id, nom: e.nom, couleur: e.couleur || COULEURS_MEMBRE[3], type: "enfant" }))
     ];
 }
@@ -2168,6 +2191,10 @@ const optionsPersonnes = (avecVide = true) => [
 const avatarHTML = (personne, taille = "") => {
     const couleur = personne?.couleur || "var(--primaire)";
     const initiale = (personne?.nom || "?").trim().charAt(0).toUpperCase();
+    if (personne?.photoURL) {
+        return `<span class="avatar ${taille}" title="${esc(personne.nom || "")}" aria-hidden="true">
+            <img src="${esc(personne.photoURL)}" alt="" loading="lazy"></span>`;
+    }
     return `<span class="avatar ${taille}" style="background:${esc(couleur)}" title="${esc(personne?.nom || "")}"
         aria-hidden="true">${esc(initiale)}</span>`;
 };
@@ -2542,22 +2569,31 @@ function entrerDansFamille(familleId, familleNom, proprietaireUid, role = null, 
     if (enfantId) { localStorage.setItem("vef-enfantId", enfantId); localStorage.setItem("vef-enfantNom", enfantNom); }
 
     document.body.classList.toggle("role-enfant", estEnfant());
-    document.body.classList.toggle("role-membre", Etat.role === "membre");
+    document.body.classList.toggle("role-membre", Etat.role !== "admin" && !estEnfant());
     majNomMaisonAffiche(familleNom);
 
     $$(".ecran").forEach(e => e.classList.remove("actif"));
     $("#app").classList.add("actif");
     majAvatarEntete();
+    majVisibiliteNav();
 
     demarrerEcoutes();
     Routeur.aller(location.hash.slice(2) || "accueil", true);
 }
 
+/** Évite de répéter l'avertissement à chaque snapshot si les règles Firestore ne sont pas à jour. */
+let avertiConversationsIndisponibles = false;
+
 function demarrerEcoutes() {
     ecouter("profils", () => {
         Etat.profil = Etat.donnees.profils.find(p => p.id === Etat.utilisateur?.uid) || null;
-        if (Etat.profil?.role === "admin") Etat.role = estEnfant() ? "enfant" : "admin";
+        if (!estEnfant() && Etat.profil?.role) {
+            Etat.role = ["admin", "restreint"].includes(Etat.profil.role) ? Etat.profil.role : "membre";
+            document.body.classList.toggle("role-membre", Etat.role !== "admin");
+        }
         majAvatarEntete();
+        majVisibiliteNav();
+        Routeur.rafraichir();
     });
     ["enfants", "evenements", "taches", "listes", "articles", "coursesSemaine",
      "achatsSpecifiques", "repas", "evenementsImportants", "routines"].forEach(nom => ecouter(nom));
@@ -2583,6 +2619,10 @@ function demarrerEcoutes() {
                 console.error("Écoute conversations :", erreur);
                 Etat.chargees.add("conversations");
                 Routeur.rafraichir();
+                if (erreur.code === "permission-denied" && !avertiConversationsIndisponibles) {
+                    avertiConversationsIndisponibles = true;
+                    toast("Messagerie privée indisponible pour le moment (configuration à finaliser).", "erreur");
+                }
             }));
     }
 
@@ -2622,15 +2662,15 @@ async function purgerAchatsSpecifiques() {
 
 const PAGES = {
     accueil:     { titre: "Accueil",     rendre: () => rendreAccueil() },
-    calendrier:  { titre: "Calendrier",  rendre: () => rendreCalendrier(),
+    calendrier:  { titre: "Calendrier",  rendre: () => rendreCalendrier(), fonctionnalite: "calendrier",
                    ouvrir: () => { Etat.ui.calDefilerVersMaintenant = true; } },
-    taches:      { titre: "Tâches",      rendre: () => rendreTaches() },
-    courses:     { titre: "Courses",     rendre: () => rendreCourses() },
-    repas:       { titre: "Repas",       rendre: () => rendreRepas() },
-    evenements:  { titre: "Événements",  rendre: () => rendreEvenementsImportants() },
-    messages:    { titre: "Messages",    rendre: () => rendreMessages() },
-    documents:   { titre: "Documents",   rendre: () => rendreDocuments(), parentSeulement: true },
-    routines:    { titre: "Routines",    rendre: () => rendreRoutines() },
+    taches:      { titre: "Tâches",      rendre: () => rendreTaches(), fonctionnalite: "taches" },
+    courses:     { titre: "Courses",     rendre: () => rendreCourses(), fonctionnalite: "courses" },
+    repas:       { titre: "Repas",       rendre: () => rendreRepas(), fonctionnalite: "repas" },
+    evenements:  { titre: "Événements",  rendre: () => rendreEvenementsImportants(), fonctionnalite: "evenements" },
+    messages:    { titre: "Messages",    rendre: () => rendreMessages(), fonctionnalite: "messages" },
+    documents:   { titre: "Documents",   rendre: () => rendreDocuments(), parentSeulement: true, fonctionnalite: "documents" },
+    routines:    { titre: "Routines",    rendre: () => rendreRoutines(), fonctionnalite: "routines" },
     recherche:   { titre: "Rechercher",  rendre: () => rendreRecherche() },
     famille:     { titre: "Famille",     rendre: () => rendreFamille(), parentSeulement: true },
     profil:      { titre: "Mon profil",  rendre: () => rendreProfil() },
@@ -2641,6 +2681,7 @@ const Routeur = {
     aller(nom, remplacer = false) {
         if (!PAGES[nom]) nom = "accueil";
         if (PAGES[nom].parentSeulement && estEnfant()) nom = "accueil";
+        if (PAGES[nom].fonctionnalite && !aAccesFonctionnalite(PAGES[nom].fonctionnalite)) nom = "accueil";
         Etat.ui.page = nom;
 
         const cible = `#/${nom}`;
@@ -2685,8 +2726,15 @@ function majAvatarEntete() {
     const couleur = estEnfant()
         ? (Etat.donnees.enfants.find(e => e.id === Etat.enfantId)?.couleur || COULEURS_MEMBRE[3])
         : (Etat.profil?.couleur || COULEURS_MEMBRE[0]);
-    element.textContent = nom.charAt(0).toUpperCase();
-    element.style.background = couleur;
+    const photoURL = estEnfant() ? "" : (Etat.profil?.photoURL || "");
+    if (photoURL && !stockageIndisponible) {
+        element.style.background = "";
+        element.innerHTML = `<img src="${esc(photoURL)}" alt="" loading="lazy">`;
+    } else {
+        element.innerHTML = "";
+        element.textContent = nom.charAt(0).toUpperCase();
+        element.style.background = couleur;
+    }
 }
 
 /** Met à jour les compteurs de la barre latérale et les pastilles mobiles. */
@@ -2724,6 +2772,15 @@ function majCompteurs() {
     definir("#pastilleCourses", articlesRestants);
 }
 
+/** Masque les onglets de navigation qu'un membre à accès restreint n'a pas le droit d'ouvrir. */
+function majVisibiliteNav() {
+    Object.entries(PAGES).forEach(([page, config]) => {
+        if (!config.fonctionnalite) return;
+        const autorise = aAccesFonctionnalite(config.fonctionnalite);
+        $$(`[data-page="${page}"]`).forEach(bouton => bouton.classList.toggle("cachee", !autorise));
+    });
+}
+
 /* ---- Menu « Plus » (mobile) ---- */
 function ouvrirMenuPlus() {
     const entrees = [
@@ -2736,7 +2793,7 @@ function ouvrirMenuPlus() {
         { page: "famille", icone: "i-famille", nom: "Famille", parent: true },
         { page: "profil", icone: "i-profil", nom: "Mon profil" },
         { page: "parametres", icone: "i-parametres", nom: "Paramètres" }
-    ].filter(e => !(e.parent && estEnfant()));
+    ].filter(e => !(e.parent && estEnfant()) && (!PAGES[e.page]?.fonctionnalite || aAccesFonctionnalite(PAGES[e.page].fonctionnalite)));
 
     ouvrirModale({
         titre: "Plus",
@@ -2761,13 +2818,13 @@ function ouvrirMenuPlus() {
 /* ---- Ajout rapide (bouton flottant) ---- */
 function ouvrirAjoutRapide() {
     const entrees = [
-        { action: "nouvelle-tache", icone: "i-taches", nom: "Tâche" },
-        { action: "nouvel-evenement", icone: "i-calendrier", nom: "Événement" },
-        { action: "nouvel-article", icone: "i-courses", nom: "Course" },
-        { action: "nouveau-repas", icone: "i-repas", nom: "Repas" },
-        { action: "nouveau-message", icone: "i-messages", nom: "Message" },
-        { action: "nouvel-evenement-important", icone: "i-evenements", nom: "Anniversaire" }
-    ];
+        { action: "nouvelle-tache", icone: "i-taches", nom: "Tâche", fonctionnalite: "taches" },
+        { action: "nouvel-evenement", icone: "i-calendrier", nom: "Événement", fonctionnalite: "calendrier" },
+        { action: "nouvel-article", icone: "i-courses", nom: "Course", fonctionnalite: "courses" },
+        { action: "nouveau-repas", icone: "i-repas", nom: "Repas", fonctionnalite: "repas" },
+        { action: "nouveau-message", icone: "i-messages", nom: "Message", fonctionnalite: "messages" },
+        { action: "nouvel-evenement-important", icone: "i-evenements", nom: "Anniversaire", fonctionnalite: "evenements" }
+    ].filter(e => aAccesFonctionnalite(e.fonctionnalite));
     ouvrirModale({
         titre: "Ajouter", description: "Que voulez-vous créer ?",
         masquerPied: true,
@@ -4471,11 +4528,12 @@ function rendreFamille() {
             <h3>Parents</h3>
             ${membresListe.map(membre => `
                 <div class="ligne">
-                    ${avatarHTML({ nom: membre.prenom, couleur: membre.couleur }, "avatar-l")}
+                    ${avatarHTML({ nom: membre.prenom, couleur: membre.couleur, photoURL: membre.photoURL }, "avatar-l")}
                     <div class="ligne-corps">
                         <div class="ligne-titre">${esc(membre.prenom)} ${esc(membre.nom || "")}
                             ${membre.id === Etat.proprietaireUid ? `<span class="badge badge-primaire">Propriétaire</span>`
-                              : membre.role === "admin" ? `<span class="badge">Administrateur</span>` : ""}
+                              : membre.role === "admin" ? `<span class="badge">Administrateur</span>`
+                              : membre.role === "restreint" ? `<span class="badge badge-accent">Accès restreint</span>` : ""}
                             ${membre.id === Etat.utilisateur?.uid ? `<span class="badge">Vous</span>` : ""}
                         </div>
                         <div class="ligne-meta">${esc(membre.email || "")}</div>
@@ -4537,12 +4595,19 @@ function rendreProfil() {
     const couleur = estEnfantConnecte ? (enfant?.couleur || COULEURS_MEMBRE[3]) : (monProfil?.couleur || COULEURS_MEMBRE[0]);
     const nom = monNom() || "Moi";
 
+    const photoURL = !estEnfantConnecte && !stockageIndisponible ? (monProfil?.photoURL || "") : "";
     $("#contenuProfil").innerHTML = `
         <div class="carte centre" style="margin-bottom:var(--espace-5)">
-            <span class="avatar avatar-xl" style="background:${esc(couleur)};margin:0 auto var(--espace-3)">${esc(nom.charAt(0).toUpperCase())}</span>
+            <div class="avatar-photo-conteneur">
+                ${avatarHTML({ nom, couleur, photoURL }, "avatar-xl")}
+                ${!estEnfantConnecte && !stockageIndisponible ? `<button class="btn-icone petit avatar-photo-bouton"
+                    data-action="changer-photo-profil" aria-label="Changer la photo de profil">
+                    <svg class="icone-s" aria-hidden="true"><use href="#i-image"></use></svg></button>` : ""}
+            </div>
             <h3>${esc(nom)}</h3>
             <p class="texte-faible">${estEnfantConnecte ? "Accès enfant" : esc(Etat.utilisateur?.email || "")}</p>
-            <p class="badge" style="margin-top:var(--espace-2)">${estEnfantConnecte ? "Enfant" : estAdmin() ? "Administrateur" : "Membre"}</p>
+            <p class="badge" style="margin-top:var(--espace-2)">${estEnfantConnecte ? "Enfant" : estAdmin() ? "Administrateur" : estRestreint() ? "Accès restreint" : "Membre"}</p>
+            ${photoURL ? `<button class="btn btn-fantome btn-s" data-action="retirer-photo-profil" style="margin-top:var(--espace-2)">Retirer la photo</button>` : ""}
         </div>
 
         ${estEnfantConnecte ? `
@@ -4736,16 +4801,43 @@ function changerCodeEnfant() {
     });
 }
 
-async function changerRoleMembre(uid) {
+/** Fonctionnalités que l'on peut ouvrir/fermer pour un membre à accès restreint. */
+const FONCTIONNALITES_RESTREIGNABLES = [
+    { id: "calendrier", label: "Calendrier" },
+    { id: "taches", label: "Tâches" },
+    { id: "courses", label: "Courses" },
+    { id: "repas", label: "Repas" },
+    { id: "evenements", label: "Événements importants" },
+    { id: "messages", label: "Messages" },
+    { id: "documents", label: "Documents" },
+    { id: "routines", label: "Routines" }
+];
+
+async function gererAccesMembre(uid) {
     const membre = Etat.donnees.profils.find(p => p.id === uid);
     if (!membre) return;
-    const nouveau = membre.role === "admin" ? "membre" : "admin";
-    const ok = await confirmer({
-        titre: "Changer le rôle",
-        message: `${membre.prenom} deviendra ${nouveau === "admin" ? "administrateur (peut tout modifier)" : "membre simple"}.`,
-        texteConfirmer: "Confirmer"
+    const permissionsActuelles = membre.permissions || {};
+    ouvrirFormulaire({
+        titre: `Accès de ${membre.prenom}`,
+        description: "« Accès restreint » limite cette personne aux fonctionnalités cochées ci-dessous "
+            + "(comme un enfant, mais avec son propre compte). Sans coche, une fonctionnalité lui est masquée.",
+        champs: [
+            { id: "role", label: "Rôle", type: "select", requis: true, valeur: membre.role || "membre", options: [
+                { id: "membre", nom: "Membre (accès complet)" },
+                { id: "admin", nom: "Administrateur" },
+                { id: "restreint", nom: "Accès restreint" }
+            ]},
+            ...FONCTIONNALITES_RESTREIGNABLES.map(f => ({
+                id: f.id, label: f.label, type: "coche", avance: true,
+                valeur: permissionsActuelles[f.id] === true
+            }))
+        ],
+        async onValider(valeurs) {
+            const { role, ...permissions } = valeurs;
+            await Donnees.modifier("profils", uid, { role, permissions });
+            toast("Accès mis à jour");
+        }
     });
-    if (ok) { await Donnees.modifier("profils", uid, { role: nouveau }); toast("Rôle mis à jour"); }
 }
 
 async function retirerMembre(uid) {
@@ -4781,6 +4873,48 @@ function modifierProfil() {
             rendreProfil();
         }
     });
+}
+
+/** Envoie (ou remplace) la photo de profil de la personne connectée. */
+async function envoyerPhotoProfil(fichier) {
+    if (!fichier) return;
+    const TAILLE_MAX_PHOTO = 5 * 1024 * 1024;
+    if (fichier.size > TAILLE_MAX_PHOTO) {
+        return alerter("Photo trop volumineuse", `Cette image fait ${formatTaille(fichier.size)}. La limite est de ${formatTaille(TAILLE_MAX_PHOTO)}.`);
+    }
+    if (!fichier.type.startsWith("image/")) {
+        return alerter("Format non pris en charge", "Choisissez une image (JPG, PNG, WEBP…).");
+    }
+    toast("Envoi de la photo…", "info");
+    try {
+        const chemin = `familles/${Etat.familleId}/avatars/${Etat.utilisateur.uid}`;
+        const reference = refStockage(stockage, chemin);
+        await uploadBytes(reference, fichier, { contentType: fichier.type });
+        const url = await getDownloadURL(reference);
+        await Donnees.modifier("profils", Etat.utilisateur.uid, { photoURL: url });
+        majAvatarEntete();
+        rendreProfil();
+        toast("Photo de profil mise à jour");
+    } catch (erreur) {
+        const codesStockageAbsent = ["storage/unknown", "storage/bucket-not-found", "storage/project-not-found"];
+        if (codesStockageAbsent.includes(erreur?.code)) {
+            stockageIndisponible = true;
+            rendreProfil();
+            await alerter("Photo de profil non disponible",
+                "Pour envoyer une photo, un administrateur doit activer Storage dans la console Firebase. "
+                + "Le reste de l'application fonctionne normalement.");
+        } else toast(messageErreur(erreur), "erreur");
+    }
+}
+
+async function retirerPhotoProfil() {
+    try {
+        await deleteObject(refStockage(stockage, `familles/${Etat.familleId}/avatars/${Etat.utilisateur.uid}`));
+    } catch { /* déjà absente : on continue quand même */ }
+    await Donnees.modifier("profils", Etat.utilisateur.uid, { photoURL: "" });
+    majAvatarEntete();
+    rendreProfil();
+    toast("Photo retirée");
 }
 
 function changerMotDePasse() {
@@ -4947,6 +5081,8 @@ const ACTIONS = {
     "renommer-famille":  renommerFamille,
     "changer-code-enfant": changerCodeEnfant,
     "modifier-profil":   modifierProfil,
+    "changer-photo-profil": () => $("#champPhotoProfil").click(),
+    "retirer-photo-profil": retirerPhotoProfil,
     "changer-mot-de-passe": changerMotDePasse,
     "categories-courses":   () => modifierCategories("categoriesCourses", "Rayons des courses", categoriesCourses()),
     "categories-documents": () => modifierCategories("categoriesDocuments", "Dossiers de documents", categoriesDocuments()),
@@ -5004,7 +5140,7 @@ const GESTIONNAIRES = {
             if (await Donnees.supprimer("routines", valeur)) toast("Routine supprimée");
         }
     },
-    roleMembre:           valeur => changerRoleMembre(valeur),
+    roleMembre:           valeur => gererAccesMembre(valeur),
     retirerMembre:        valeur => retirerMembre(valeur),
     modifierEnfant:       valeur => modifierEnfant(valeur),
     supprimerEnfant:      valeur => supprimerEnfant(valeur),
@@ -5063,6 +5199,12 @@ $("#integCouleurs").addEventListener("click", e => {
     $$("#integCouleurs [data-couleur]").forEach(b => b.setAttribute("aria-pressed", "false"));
     bouton.setAttribute("aria-pressed", "true");
     couleurIntegration = bouton.dataset.couleur;
+});
+
+/* Photo de profil */
+$("#champPhotoProfil").addEventListener("change", e => {
+    if (e.target.files?.[0]) envoyerPhotoProfil(e.target.files[0]);
+    e.target.value = "";
 });
 
 /* Documents : champ fichier et glisser-déposer */

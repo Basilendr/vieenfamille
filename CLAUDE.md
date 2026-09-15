@@ -61,8 +61,11 @@ Deux mécanismes portent la majeure partie du code, à réutiliser plutôt qu'à
 maisons/{CODE}                      { nom, proprietaireUid, membres: [uid], dateCreation }
   /prive/secrets                    { codeEnfant }   ← jamais lisible par un client
   /enfantsVerifies/{uidAnonyme}     { codeSaisi, dateVerification }
-  /profils/{uid}                    { prenom, nom, couleur, role, email, tableauBord[], tableauMasques[],
-                                      dernierLuGroupe }  ← horodatage de lecture du fil de groupe
+  /profils/{uid}                    { prenom, nom, couleur, role, email, photoURL, tableauBord[],
+                                      tableauMasques[], dernierLuGroupe, permissions }
+                                     ← role: "admin" | "membre" | "restreint" ; permissions n'a de sens
+                                       que pour "restreint" (voir § Accès et rôles) ; photoURL pointe
+                                       vers Storage familles/{CODE}/avatars/{uid}
   /enfants/{id}                     { nom, couleur }            ← enfants sans compte
   /evenements/{id}                  { titre, date, debut, fin, journeeEntiere, recurrence,
                                       personneId, categorie, lieu, description, couleur }
@@ -87,7 +90,8 @@ maisons/{CODE}                      { nom, proprietaireUid, membres: [uid], date
   /meta/parametres                  { categoriesCourses[], categoriesDocuments[] }
 ```
 
-Fichiers dans Storage : `familles/{CODE}/documents/{id}_{nom}`.
+Fichiers dans Storage : `familles/{CODE}/documents/{id}_{nom}` et `familles/{CODE}/avatars/{uid}`
+(une seule photo par personne, écrasée à chaque changement — pas d'historique).
 
 `{CODE}` est un code de 8 caractères généré à la création (alphabet sans caractères ambigus), qui sert
 **à la fois** d'identifiant du document et de code à partager. Affiché à l'utilisateur au format `XXXX-XXXX`
@@ -99,15 +103,41 @@ version : ne pas les fusionner dans `articles`, des données réelles y vivent.
 ## Accès et rôles
 
 - **Administrateur** : compte Firebase, `profils/{uid}.role === "admin"` ou propriétaire de la famille.
-  Gère les membres, les rôles, le code enfant, renomme la famille.
+  Gère les membres, les rôles/accès, le code enfant, renomme la famille.
 - **Membre** : compte Firebase. Crée et modifie tout le contenu, mais pas les rôles.
+- **Accès restreint** (`role === "restreint"`) : un membre avec un **vrai compte** (e-mail ou Google),
+  mais dont un administrateur a coché uniquement certaines fonctionnalités dans
+  `profils/{uid}.permissions` (clés : `calendrier`, `taches`, `courses`, `repas`, `evenements`,
+  `messages`, `documents`, `routines`). Pensé pour « rétrograder » un parent façon enfant tout en
+  gardant son compte. Se règle depuis Famille → icône bouclier sur la personne (`gererAccesMembre`,
+  section F11) ; réutilise le champ `select` + des `coche` de `ouvrirFormulaire`.
+  `Famille`, `Profil`, `Paramètres` et `Recherche` restent toujours accessibles (ce ne sont pas des
+  « fonctionnalités » à cocher) ; `Documents` reste de toute façon interdit à un enfant (voir plus bas).
 - **Enfant** : pas de compte. Saisit code famille + code enfant → connexion anonyme Firebase, puis
   écriture d'un doc dans `enfantsVerifies` que les règles n'autorisent que si le code enfant correspond.
   Il choisit ensuite son prénom dans la liste.
-- Les restrictions sont **doublées** : CSS (`body.role-enfant .parent-seulement`, `body.role-membre
-  .admin-seulement`) **et** règles Firestore. Un enfant ne peut que cocher (`achete`, `fait`/`faitLe`,
-  `progression`), jamais créer ni supprimer, et n'a **aucun** accès aux documents.
+- Les restrictions sont **doublées**, pour les trois niveaux :
+  - CSS/JS : `body.role-enfant .parent-seulement`, `body.role-membre .admin-seulement` (le membre
+    « restreint » porte aussi `role-membre`), et `majVisibiliteNav()` qui masque les onglets de
+    navigation (barre latérale, barre basse, menu « Plus ») selon `aAccesFonctionnalite(cle)` —
+    le routeur (`Routeur.aller`) redirige aussi vers l'accueil si on force une page non autorisée.
+  - Règles Firestore/Storage : **c'est la vraie barrière de sécurité**, la seule qui compte si
+    quelqu'un contourne l'interface. Un enfant ne peut que cocher (`achete`, `fait`/`faitLe`,
+    `progression`), jamais créer ni supprimer, et n'a **aucun** accès aux documents. Un membre
+    restreint sans la case cochée n'a **aucun** accès (lecture comme écriture) à la collection
+    correspondante — `accesFonctionnalite()` dans `firestore.rules`.
 - Le reset hebdomadaire des courses et l'expiration des achats ponctuels ne tournent que pour un parent.
+
+**Sécurité — 2026-09** : une faille a été corrigée dans `firestore.rules` sur `maisons/{maisonId}` —
+la règle `update` permettait auparavant à **n'importe quel membre simple** (pas seulement un admin) de
+modifier n'importe quel champ du document, y compris renommer la famille ou, plus grave, s'attribuer
+`proprietaireUid`. La règle actuelle distingue précisément : rejoindre (+1 soi-même), quitter/supprimer
+son compte (-1 soi-même), et administrateur seul pour renommer ou retirer un tiers — `proprietaireUid`
+n'est modifiable par personne via cette règle. **Republier `firestore.rules` corrige cette faille.**
+
+Mot de passe exigé à la **création** d'un compte : 10 caractères minimum, une majuscule, une minuscule,
+un chiffre (`motDePasseValide()`, section A). Ne s'applique pas à la connexion à un compte existant,
+pour ne pas bloquer les comptes déjà créés avec l'ancienne règle (6 caractères).
 
 ## Configuration Firebase à faire / vérifier
 
@@ -120,14 +150,17 @@ version : ne pas les fusionner dans `articles`, des données réelles y vivent.
   reste stable une fois ajouté — pas besoin de le refaire à chaque déploiement. Seules les URLs de
   **preview** (une par branche/PR) sont différentes et devront être ajoutées séparément si vous testez
   la connexion dessus.
-- Firestore → Rules : publier le contenu de `firestore.rules`. **À REPUBLIER** — les règles ont changé
-  (profils, evenements, listes, articles, repas, evenementsImportants, messages, **conversations**,
-  documents, routines).
+- Firestore → Rules : publier le contenu de `firestore.rules`. **À REPUBLIER, urgent** — plusieurs
+  changements de sécurité en attente : conversations privées, accès restreint par fonctionnalité, et
+  surtout la **correction d'une faille** sur `maisons/{maisonId}` (un membre simple pouvait modifier
+  n'importe quel champ, y compris s'auto-nommer propriétaire — voir § Accès et rôles). Tant que ce
+  n'est pas fait, la messagerie privée échoue silencieusement (`permission-denied`) et la faille reste
+  ouverte en production.
 - Storage → activer le service puis publier `storage.rules`. **Non fait à ce jour** : depuis fin 2024,
   Firebase impose le plan **Blaze** (carte bancaire au dossier) pour activer Storage. L'usage d'une
   famille reste dans le quota gratuit, mais la décision appartient à l'utilisateur.
-  Tant que Storage n'est pas activé, l'onglet Documents affiche un bandeau d'explication et refuse
-  proprement les envois (`stockageIndisponible` dans la section F8) — **tout le reste fonctionne**.
+  Tant que Storage n'est pas activé, les onglets Documents et la photo de profil affichent un message
+  d'explication et refusent proprement les envois (`stockageIndisponible`) — **tout le reste fonctionne**.
 
 ## Direction visuelle
 
@@ -159,6 +192,9 @@ couleur en dur dans un composant, toujours réutiliser une variable existante.
   taupe, sarcelle), dupliquée en JS dans `COULEURS_MEMBRE` (les profils existants gardent leur ancienne
   couleur stockée en base tant qu'elle n'est pas changée manuellement — aucune migration automatique).
 - Icônes : sprite SVG intégré (jeu Lucide). **Jamais d'emoji comme icône.**
+- Logo : maison en trait blanc sur carré bleu ardoise (`icon.svg`, réutilisé inline via
+  `<use href="#i-accueil">` dans `.logo`/`.logo-centre` pour l'en-tête, la barre latérale et les
+  4 écrans de connexion/inscription). Le favicon et l'icône d'écran d'accueil partagent le même motif.
 
 ## Pièges rencontrés
 

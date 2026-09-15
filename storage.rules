@@ -18,17 +18,44 @@ service firebase.storage {
            firestore.get(/databases/(default)/documents/maisons/$(familleId)).data.membres;
     }
 
-    match /familles/{familleId}/documents/{fichier} {
-      allow read: if estMembre(familleId);
+    function profil(familleId) {
+      return firestore.get(/databases/(default)/documents/maisons/$(familleId)/profils/$(request.auth.uid)).data;
+    }
 
-      allow write: if estMembre(familleId)
+    /** Un membre "restreint" ne voit les documents que si la case est cochée dans son profil. */
+    function accesDocuments(familleId) {
+      return estMembre(familleId) && (
+        !firestore.exists(/databases/(default)/documents/maisons/$(familleId)/profils/$(request.auth.uid)) ||
+        profil(familleId).role != 'restreint' ||
+        (profil(familleId).permissions != null && profil(familleId).permissions.documents == true)
+      );
+    }
+
+    match /familles/{familleId}/documents/{fichier} {
+      allow read: if accesDocuments(familleId);
+
+      allow write: if accesDocuments(familleId)
         && request.resource.size < 15 * 1024 * 1024
         && request.resource.contentType.matches(
              'application/pdf|image/.*|text/.*|application/msword'
              + '|application/vnd.*|application/octet-stream'
            );
 
-      allow delete: if estMembre(familleId);
+      allow delete: if accesDocuments(familleId);
+    }
+
+    /* ---- Photos de profil : chacun ne gère que la sienne ---- */
+    function estEnfantVerifie(familleId) {
+      return request.auth != null && firestore.exists(
+        /databases/(default)/documents/maisons/$(familleId)/enfantsVerifies/$(request.auth.uid));
+    }
+
+    match /familles/{familleId}/avatars/{uid} {
+      allow read: if estMembre(familleId) || estEnfantVerifie(familleId);
+      allow write: if request.auth != null && request.auth.uid == uid && estMembre(familleId)
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null && request.auth.uid == uid && estMembre(familleId);
     }
 
     // Aucun autre chemin n'est accessible.
