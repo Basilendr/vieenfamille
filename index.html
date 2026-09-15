@@ -1185,20 +1185,39 @@ body:not(.role-enfant) .enfant-seulement { display: none !important; }
                 <svg class="icone-s" aria-hidden="true"><use href="#i-gauche"></use></svg> Retour
             </button>
             <div class="carte" id="blocEnfantCodes">
-                <h2 style="margin-bottom:var(--espace-1)">Accès enfant</h2>
-                <p class="texte-doux">Pas besoin de compte : demande les deux codes à un parent.</p>
-                <form id="formEnfant" novalidate>
-                    <div class="champ">
-                        <label for="enfantCodeFamille">Code de la famille</label>
-                        <input class="saisie" id="enfantCodeFamille" placeholder="XXXX-XXXX" autocomplete="off" maxlength="9" required>
-                    </div>
-                    <div class="champ">
-                        <label for="enfantCodeSecret">Code enfant</label>
-                        <input class="saisie" id="enfantCodeSecret" placeholder="Le code donné par tes parents" autocomplete="off" required>
-                    </div>
-                    <p class="erreur-champ cachee" id="erreurEnfant" role="alert"></p>
-                    <button class="btn btn-primaire btn-bloc" type="submit">Entrer</button>
-                </form>
+                <div class="etapes-indicateur" aria-hidden="true" id="enfantEtapesIndicateur">
+                    <span class="faite"></span><span></span>
+                </div>
+                <!-- Sous-étape 1 : code de la famille -->
+                <div class="etape actif" data-sous-etape-enfant="1">
+                    <h2 style="margin-bottom:var(--espace-1)">Code de la famille</h2>
+                    <p class="texte-doux">Pas besoin de compte : demande ce code à un parent.</p>
+                    <form id="formEnfantFamille" novalidate>
+                        <div class="champ">
+                            <label for="enfantCodeFamille">Code de la famille</label>
+                            <input class="saisie" id="enfantCodeFamille" placeholder="XXXX-XXXX" autocomplete="off" maxlength="9" required>
+                        </div>
+                        <p class="erreur-champ cachee" id="erreurEnfantFamille" role="alert"></p>
+                        <button class="btn btn-primaire btn-bloc" type="submit">Continuer</button>
+                    </form>
+                </div>
+                <!-- Sous-étape 2 : code secret -->
+                <div class="etape" data-sous-etape-enfant="2">
+                    <h2 style="margin-bottom:var(--espace-1)">Ton code secret</h2>
+                    <p class="texte-doux">Tu rejoins <strong id="enfantFamilleNomAffiche"></strong>. Demande ce
+                        deuxième code à un parent.</p>
+                    <form id="formEnfantSecret" novalidate>
+                        <div class="champ">
+                            <label for="enfantCodeSecret">Code secret</label>
+                            <input class="saisie" id="enfantCodeSecret" placeholder="Le code donné par tes parents" autocomplete="off" required>
+                        </div>
+                        <p class="erreur-champ cachee" id="erreurEnfant" role="alert"></p>
+                        <div class="rangee">
+                            <button class="btn btn-contour" type="button" data-action="enfant-etape-precedente">Retour</button>
+                            <button class="btn btn-primaire pousse" type="submit">Entrer</button>
+                        </div>
+                    </form>
+                </div>
             </div>
             <div class="carte cachee" id="blocEnfantIdentite">
                 <h2 style="margin-bottom:var(--espace-1)">Qui es-tu ?</h2>
@@ -2473,7 +2492,7 @@ function majEtapeIntegration() {
 
 async function creerFamille() {
     const nom = $("#integNomFamille").value.trim();
-    const codeEnfant = $("#integCodeEnfant").value.trim();
+    const codeEnfant = normaliserCodeEnfant($("#integCodeEnfant").value);
     const erreur = $("#erreurIntegNom");
     erreur.classList.add("cachee");
     if (!nom) {
@@ -2513,30 +2532,84 @@ async function terminerIntegration() {
 }
 
 /* ---- Accès enfant ---- */
-$("#formEnfant").addEventListener("submit", async e => {
+/** Un enfant tape rarement son code exactement comme un parent l'a saisi (majuscules,
+ *  espaces avant/après) — normaliser des deux côtés (ici et dans creerFamille/
+ *  changerCodeEnfant) évite que ça échoue en silence pour une simple différence de casse,
+ *  la cause la plus fréquente de « ça ne marche jamais ». */
+const normaliserCodeEnfant = valeur => (valeur || "").trim().toLowerCase();
+
+/* ---- Accès enfant, en deux étapes claires : code de la famille, puis code secret ---- */
+let etapeEnfant = 1;
+let enfantFamilleCode = null;
+let enfantFamilleNom = null;
+
+function majEtapeEnfant() {
+    $$("#blocEnfantCodes [data-sous-etape-enfant]").forEach(e =>
+        e.classList.toggle("actif", Number(e.dataset.sousEtapeEnfant) === etapeEnfant));
+    $$("#enfantEtapesIndicateur > span").forEach((s, i) => s.classList.toggle("faite", i < etapeEnfant));
+}
+
+function reinitialiserEcranEnfant() {
+    etapeEnfant = 1;
+    enfantFamilleCode = null;
+    enfantFamilleNom = null;
+    $("#blocEnfantCodes").classList.remove("cachee");
+    $("#blocEnfantIdentite").classList.add("cachee");
+    $("#formEnfantFamille").reset();
+    $("#formEnfantSecret").reset();
+    $("#erreurEnfantFamille").classList.add("cachee");
+    $("#erreurEnfant").classList.add("cachee");
+    majEtapeEnfant();
+}
+
+$("#formEnfantFamille").addEventListener("submit", async e => {
     e.preventDefault();
     const code = nettoyerCodeFamille($("#enfantCodeFamille").value);
-    const secret = $("#enfantCodeSecret").value.trim();
-    const erreur = $("#erreurEnfant");
+    const erreur = $("#erreurEnfantFamille");
     erreur.classList.add("cachee");
     const afficher = message => {
         erreur.innerHTML = `<svg class="icone-s" aria-hidden="true"><use href="#i-alerte"></use></svg> ${esc(message)}`;
         erreur.classList.remove("cachee");
     };
-    if (code.length !== 8 || !secret) return afficher("Vérifie les deux codes.");
+    if (code.length !== 8) return afficher("Le code doit comporter 8 caractères.");
     const bouton = e.target.querySelector("button[type=submit]");
     bouton.dataset.charge = "1";
     try {
         if (!auth.currentUser) await signInAnonymously(auth);
         const famille = await getDoc(doc(db, "maisons", code));
         if (!famille.exists()) return afficher("Aucune famille ne correspond à ce code.");
-        // Les règles Firestore refusent l'écriture si le code enfant est faux :
+        enfantFamilleCode = code;
+        enfantFamilleNom = famille.data().nom;
+        $("#enfantFamilleNomAffiche").textContent = enfantFamilleNom;
+        etapeEnfant = 2;
+        majEtapeEnfant();
+        setTimeout(() => $("#enfantCodeSecret")?.focus(), 100);
+    } catch (erreurAttrapee) { afficher(messageErreur(erreurAttrapee)); }
+    finally { delete bouton.dataset.charge; }
+});
+
+$("#formEnfantSecret").addEventListener("submit", async e => {
+    e.preventDefault();
+    const secret = normaliserCodeEnfant($("#enfantCodeSecret").value);
+    const erreur = $("#erreurEnfant");
+    erreur.classList.add("cachee");
+    const afficher = message => {
+        erreur.innerHTML = `<svg class="icone-s" aria-hidden="true"><use href="#i-alerte"></use></svg> ${esc(message)}`;
+        erreur.classList.remove("cachee");
+    };
+    if (!secret) return afficher("Indique le code secret.");
+    if (!enfantFamilleCode) { etapeEnfant = 1; majEtapeEnfant(); return; }
+    const bouton = e.target.querySelector("button[type=submit]");
+    bouton.dataset.charge = "1";
+    try {
+        if (!auth.currentUser) await signInAnonymously(auth);
+        // Les règles Firestore refusent l'écriture si le code secret est faux :
         // la vérification réelle se fait côté serveur, jamais ici.
-        await setDoc(doc(db, "maisons", code, "enfantsVerifies", auth.currentUser.uid),
+        await setDoc(doc(db, "maisons", enfantFamilleCode, "enfantsVerifies", auth.currentUser.uid),
             { codeSaisi: secret, dateVerification: Date.now() });
-        await afficherChoixEnfant(code, famille.data().nom);
+        await afficherChoixEnfant(enfantFamilleCode, enfantFamilleNom);
     } catch (erreurAttrapee) {
-        if (erreurAttrapee.code === "permission-denied") afficher("Le code enfant n'est pas le bon.");
+        if (erreurAttrapee.code === "permission-denied") afficher("Ce code secret n'est pas le bon.");
         else afficher(messageErreur(erreurAttrapee));
     } finally { delete bouton.dataset.charge; }
 });
@@ -5090,11 +5163,14 @@ function renommerFamille() {
 function changerCodeEnfant() {
     ouvrirFormulaire({
         titre: "Modifier le code enfant",
-        description: "Les enfants devront saisir ce nouveau code.",
+        description: "Simple, sans majuscule ni espace : l'enfant doit pouvoir le retaper sans erreur.",
         champs: [{ id: "codeEnfant", label: "Nouveau code", type: "texte", requis: true, placeholder: "maison42" }],
         async onValider(valeurs) {
-            await setDoc(doc(db, "maisons", Etat.familleId, "prive", "secrets"), { codeEnfant: valeurs.codeEnfant }, { merge: true });
-            toast("Code enfant mis à jour");
+            const code = normaliserCodeEnfant(valeurs.codeEnfant);
+            await setDoc(doc(db, "maisons", Etat.familleId, "prive", "secrets"), { codeEnfant: code }, { merge: true });
+            // On réaffiche le code exact enregistré : plus simple à recopier pour le
+            // transmettre à l'enfant que de se fier à ce qu'on a tapé de mémoire.
+            await alerter("Code enfant enregistré", `Donnez ce code à l'enfant, tel quel : « ${code} »`);
         }
     });
 }
@@ -5337,11 +5413,7 @@ function quitterFamille() {
 function afficherMesMaisonsEnfant() {
     montrerEcran("ecranEnfant");
     const maisons = maisonsEnfantMemorisees();
-    if (!maisons.length) {
-        $("#blocEnfantCodes").classList.remove("cachee");
-        $("#blocEnfantIdentite").classList.add("cachee");
-        return;
-    }
+    if (!maisons.length) { reinitialiserEcranEnfant(); return; }
     $("#blocEnfantCodes").classList.add("cachee");
     $("#blocEnfantIdentite").classList.remove("cachee");
     $("#listeChoixEnfant").innerHTML = maisons.map(m => `
@@ -5370,14 +5442,11 @@ const ACTIONS = {
     "auth-google": authentifierGoogle,
     "retour-garde":     () => montrerEcran("ecranGarde"),
     "ouvrir-acces-enfant": () => {
-        $("#blocEnfantCodes").classList.remove("cachee");
-        $("#blocEnfantIdentite").classList.add("cachee");
+        reinitialiserEcranEnfant();
         montrerEcran("ecranEnfant");
     },
-    "ajouter-maison-enfant": () => {
-        $("#blocEnfantCodes").classList.remove("cachee");
-        $("#blocEnfantIdentite").classList.add("cachee");
-    },
+    "ajouter-maison-enfant": reinitialiserEcranEnfant,
+    "enfant-etape-precedente": () => { etapeEnfant = 1; majEtapeEnfant(); },
     "deconnexion":      deconnexion,
     "recharger-familles": afficherMesFamilles,
     "creer-famille":    ouvrirIntegration,

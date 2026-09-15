@@ -130,9 +130,19 @@ version : ne pas les fusionner dans `articles`, des données réelles y vivent.
   section F11) ; réutilise le champ `select` + des `coche` de `ouvrirFormulaire`.
   `Famille`, `Profil`, `Paramètres` et `Recherche` restent toujours accessibles (ce ne sont pas des
   « fonctionnalités » à cocher) ; `Documents` reste de toute façon interdit à un enfant (voir plus bas).
-- **Enfant** : pas de compte. Saisit code famille + code enfant → connexion anonyme Firebase, puis
-  écriture d'un doc dans `enfantsVerifies` que les règles n'autorisent que si le code enfant correspond.
-  Il choisit ensuite son prénom dans la liste (ce qui pose `enfants/{id}.uidActuel`, voir plus haut).
+- **Enfant** : pas de compte. Écran en **2 étapes** (`#ecranEnfant`, `.etape`/`.etapes-indicateur`,
+  section D ~ligne 2565) : 1) code famille (8 caractères, `nettoyerCodeFamille()`) → affiche le nom
+  de la famille ; 2) code secret propre à l'enfant, comparé côté serveur au code défini par un parent
+  (`changerCodeEnfant`, jamais lisible du client). Les deux étapes déclenchent `signInAnonymously`
+  dès qu'un `getDoc`/`setDoc` en a besoin — **important** : la lecture du nom de famille à l'étape 1
+  exige déjà `request.auth != null` côté règles (`allow get: if estConnecte()`), donc la connexion
+  anonyme doit avoir lieu **avant** cette lecture, pas seulement à l'étape 2 ; l'oublier fait échouer
+  l'étape 1 à chaque tentative sur un appareil/navigateur neuf (corrigé le 2026-09-15, bug qui rendait
+  la connexion enfant totalement inutilisable en pratique). Le code secret est normalisé des deux
+  côtés (`normaliserCodeEnfant`, `.trim().toLowerCase()`) pour éviter les échecs liés à la casse ou
+  aux espaces, la comparaison Firestore étant une égalité stricte de chaîne. Une fois validé,
+  écriture d'un doc dans `enfantsVerifies` que les règles n'autorisent que si le code correspond,
+  puis choix du prénom dans la liste (ce qui pose `enfants/{id}.uidActuel`, voir plus haut).
   Depuis 2026-09, un enfant **n'est plus en lecture seule** : il peut écrire dans le groupe familial
   (et gérer ses propres messages), créer une **demande de course** (jamais l'ajouter directement —
   un parent valide), cocher ses tâches/courses/étapes de routine (déjà permis), et modifier sa propre
