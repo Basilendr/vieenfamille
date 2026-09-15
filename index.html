@@ -619,6 +619,13 @@ main { display: block; }
     background: var(--danger); color: var(--sur-danger);
     font-size: 10px; font-weight: 800; line-height: 16px; text-align: center;
 }
+.btn-icone { position: relative; }
+.btn-icone .pastille-compteur {
+    position: absolute; top: 4px; right: 4px;
+    min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--rayon-pilule);
+    background: var(--danger); color: var(--sur-danger);
+    font-size: 10px; font-weight: 800; line-height: 16px; text-align: center;
+}
 
 /* ---- Bouton flottant d'ajout rapide ---- */
 .fab {
@@ -998,6 +1005,7 @@ mark { background: var(--accent-doux); color: inherit; border-radius: 3px; paddi
 /* ---- Restrictions selon le rôle ---- */
 body.role-membre .admin-seulement { display: none !important; }
 body.role-enfant .parent-seulement { display: none !important; }
+body:not(.role-enfant) .enfant-seulement { display: none !important; }
 
 /* ============ 9. PRÉFÉRENCES SYSTÈME =================================== */
 @media (prefers-reduced-motion: reduce) {
@@ -1320,6 +1328,10 @@ body.role-enfant .parent-seulement { display: none !important; }
                 <button class="btn-icone" data-page="recherche" aria-label="Rechercher" title="Rechercher">
                     <svg class="icone" aria-hidden="true"><use href="#i-recherche"></use></svg>
                 </button>
+                <button class="btn-icone" data-action="ouvrir-notifications" aria-label="Notifications" title="Notifications">
+                    <svg class="icone" aria-hidden="true"><use href="#i-cloche"></use></svg>
+                    <span class="pastille-compteur cachee" id="pastilleNotifications"></span>
+                </button>
                 <button class="btn-icone" data-action="basculer-theme" aria-label="Changer de thème" title="Changer de thème">
                     <svg class="icone" aria-hidden="true" id="iconeTheme"><use href="#i-lune"></use></svg>
                 </button>
@@ -1372,6 +1384,10 @@ body.role-enfant .parent-seulement { display: none !important; }
                 <input class="saisie" id="courseRapideNom" placeholder="Ajouter un produit puis Entrée…" aria-label="Ajouter un produit" autocomplete="off">
                 <button class="btn btn-primaire" type="submit" aria-label="Ajouter le produit"><svg class="icone" aria-hidden="true"><use href="#i-plus"></use></svg></button>
             </form>
+            <button class="btn btn-contour btn-bloc enfant-seulement" data-action="demander-course" style="margin-bottom:var(--espace-4)">
+                <svg class="icone-s" aria-hidden="true"><use href="#i-plus"></use></svg> Demander un produit
+            </button>
+            <div id="demandesCoursesBloc"></div>
             <div class="rangee-espacee" style="margin-bottom:var(--espace-3)">
                 <span class="texte-faible" id="resumeCourses" aria-live="polite"></span>
                 <button class="btn btn-fantome btn-s parent-seulement" data-action="vider-achetes">
@@ -2063,7 +2079,8 @@ const Etat = {
     donnees: {
         profils: [], enfants: [], evenements: [], taches: [], listes: [], articles: [],
         coursesSemaine: [], achatsSpecifiques: [], repas: [], evenementsImportants: [],
-        messages: [], documents: [], routines: [], conversations: []
+        messages: [], documents: [], routines: [], conversations: [],
+        demandesCourses: [], notifications: []
     },
     chargees: new Set(),
     ecoutes: [],
@@ -2169,7 +2186,7 @@ const membres = () => Etat.donnees.profils;
 function personnes() {
     return [
         ...Etat.donnees.profils.map(p => ({ id: p.id, nom: p.prenom || "Sans nom", couleur: p.couleur || COULEURS_MEMBRE[0], photoURL: p.photoURL || "", type: "membre" })),
-        ...Etat.donnees.enfants.map(e => ({ id: e.id, nom: e.nom, couleur: e.couleur || COULEURS_MEMBRE[3], type: "enfant" }))
+        ...Etat.donnees.enfants.map(e => ({ id: e.id, nom: e.nom, couleur: e.couleur || COULEURS_MEMBRE[3], photoURL: e.photoURL || "", type: "enfant" }))
     ];
 }
 const personneParId = id => personnes().find(p => p.id === id) || null;
@@ -2524,6 +2541,19 @@ $("#formEnfant").addEventListener("submit", async e => {
     } finally { delete bouton.dataset.charge; }
 });
 
+/** Un enfant n'a pas de `membres[]` à interroger : on retient localement (ce navigateur)
+ *  chaque maison déjà vérifiée avec succès, pour proposer un vrai sélecteur plus tard
+ *  (voir quitterFamille) sans jamais avoir à se déconnecter. */
+function maisonsEnfantMemorisees() {
+    try { return JSON.parse(localStorage.getItem("vef-enfant-maisons") || "[]"); }
+    catch { return []; }
+}
+function retenirMaisonEnfant(id, nom, enfantId, enfantNom) {
+    const liste = maisonsEnfantMemorisees().filter(m => m.id !== id);
+    liste.push({ id, nom, enfantId, enfantNom });
+    localStorage.setItem("vef-enfant-maisons", JSON.stringify(liste));
+}
+
 async function afficherChoixEnfant(familleId, familleNom) {
     $("#blocEnfantCodes").classList.add("cachee");
     $("#blocEnfantIdentite").classList.remove("cachee");
@@ -2596,9 +2626,23 @@ function demarrerEcoutes() {
         Routeur.rafraichir();
     });
     ["enfants", "evenements", "taches", "listes", "articles", "coursesSemaine",
-     "achatsSpecifiques", "repas", "evenementsImportants", "routines"].forEach(nom => ecouter(nom));
+     "achatsSpecifiques", "repas", "evenementsImportants", "routines", "demandesCourses"].forEach(nom => ecouter(nom));
     ecouter("messages", () => rafraichirFilGroupeOuvert?.());
     if (!estEnfant()) ecouter("documents");
+
+    // Notifications : chacun ne voit que les siennes (enfant compris).
+    Etat.ecoutes.push(onSnapshot(
+        query(refCollection("notifications"), where("destinataireId", "==", moiId())),
+        instantane => {
+            Etat.donnees.notifications = instantane.docs.map(d => ({ id: d.id, ...d.data() }));
+            Etat.chargees.add("notifications");
+            majCompteurs();
+            Routeur.rafraichir();
+        },
+        erreur => { console.error("Écoute notifications :", erreur); Etat.chargees.add("notifications"); }));
+
+    Etat.minuteurs.push(setInterval(verifierRappels, 60000));
+    verifierRappels();
 
     // Paramètres de la famille
     Etat.ecoutes.push(onSnapshot(refDocument("meta", "parametres"),
@@ -2723,10 +2767,9 @@ function majAvatarEntete() {
     const element = $("#avatarEntete");
     if (!element) return;
     const nom = monNom() || "?";
-    const couleur = estEnfant()
-        ? (Etat.donnees.enfants.find(e => e.id === Etat.enfantId)?.couleur || COULEURS_MEMBRE[3])
-        : (Etat.profil?.couleur || COULEURS_MEMBRE[0]);
-    const photoURL = estEnfant() ? "" : (Etat.profil?.photoURL || "");
+    const enfantActuel = estEnfant() ? Etat.donnees.enfants.find(e => e.id === Etat.enfantId) : null;
+    const couleur = estEnfant() ? (enfantActuel?.couleur || COULEURS_MEMBRE[3]) : (Etat.profil?.couleur || COULEURS_MEMBRE[0]);
+    const photoURL = estEnfant() ? (enfantActuel?.photoURL || "") : (Etat.profil?.photoURL || "");
     if (photoURL && !stockageIndisponible) {
         element.style.background = "";
         element.innerHTML = `<img src="${esc(photoURL)}" alt="" loading="lazy">`;
@@ -2770,6 +2813,7 @@ function majCompteurs() {
     definir("#cptMessages", messagesNonLus);
     definir("#pastilleTaches", tachesOuvertes);
     definir("#pastilleCourses", articlesRestants);
+    definir("#pastilleNotifications", Etat.donnees.notifications.filter(n => !n.lu).length);
 }
 
 /** Masque les onglets de navigation qu'un membre à accès restreint n'a pas le droit d'ouvrir. */
@@ -3554,6 +3598,7 @@ $("#formTacheRapide").addEventListener("submit", async e => {
 /* ============================ F4. COURSES ============================== */
 
 function rendreCourses() {
+    rendreDemandesCourses();
     const listes = toutesLesListes();
     if (!listes.find(l => l.id === Etat.ui.listeActive)) Etat.ui.listeActive = "semaine";
 
@@ -3711,6 +3756,106 @@ function nouvelleListe() {
             if (id) { Etat.ui.listeActive = id; toast("Liste créée"); rendreCourses(); }
         }
     });
+}
+
+/* ---- Demandes de courses : un enfant demande, un parent valide ---- */
+
+function rendreDemandesCourses() {
+    const cible = $("#demandesCoursesBloc");
+    if (!cible) return;
+    const demandes = trierPar(Etat.donnees.demandesCourses.filter(d =>
+        d.statut === "attente" || (estEnfant() && d.demandeurId === moiId())), "dateCreation", true);
+    if (!demandes.length) { cible.innerHTML = ""; return; }
+    cible.innerHTML = `<section class="section">
+        <h3>Demandes de courses</h3>
+        ${demandes.map(demandeLigneHTML).join("")}
+    </section>`;
+}
+
+function demandeLigneHTML(demande) {
+    const badges = { attente: "", acceptee: `<span class="badge badge-succes">Acceptée</span>`,
+                     refusee: `<span class="badge badge-danger">Refusée</span>` };
+    const meta = [demande.quantite, demande.commentaire].filter(Boolean).join(" · ");
+    return `<div class="ligne" style="align-items:flex-start">
+        ${avatarHTML({ nom: demande.demandeurNom })}
+        <div class="ligne-corps">
+            <div class="ligne-titre">${esc(demande.nom)} ${badges[demande.statut] || ""}</div>
+            <div class="ligne-meta">${esc(demande.demandeurNom || "")}${meta ? " · " + esc(meta) : ""}</div>
+        </div>
+        ${demande.statut === "attente" && accesFonctionnalite("courses") && !estRestreint() ? `<div class="ligne-actions">
+            <button class="btn-icone petit" data-accepter-demande="${esc(demande.id)}" aria-label="Ajouter aux courses">
+                <svg class="icone-s" aria-hidden="true"><use href="#i-coche"></use></svg></button>
+            <button class="btn-icone petit danger" data-refuser-demande="${esc(demande.id)}" aria-label="Refuser">
+                <svg class="icone-s" aria-hidden="true"><use href="#i-fermer"></use></svg></button>
+        </div>` : ""}
+    </div>`;
+}
+
+function demanderCourse() {
+    ouvrirFormulaire({
+        titre: "Demander un produit",
+        description: "Un parent devra valider avant qu'il n'apparaisse dans les courses.",
+        champs: [
+            { id: "nom", label: "Produit", type: "texte", requis: true, placeholder: "Nutella" },
+            { id: "quantite", label: "Quantité", type: "texte", placeholder: "1 pot" },
+            { id: "commentaire", label: "Commentaire", type: "texte", avance: true }
+        ],
+        texteValider: "Envoyer la demande",
+        async onValider(valeurs) {
+            await envoyerDemandeCourse(valeurs.nom, valeurs.quantite, valeurs.commentaire);
+            toast("Demande envoyée");
+        }
+    });
+}
+
+async function envoyerDemandeCourse(nom, quantite, commentaire) {
+    try {
+        const reference = await addDoc(refCollection("demandesCourses"), {
+            nom, quantite: quantite || "", commentaire: commentaire || "",
+            demandeurId: moiId(), demandeurNom: monNom() || "Membre",
+            statut: "attente", dateCreation: Date.now()
+        });
+        notifierParents({
+            type: "SHOPPING_REQUEST_CREATED", titre: `${monNom() || "Quelqu'un"} demande : ${nom}`,
+            description: quantite || "", ressourceType: "demandeCourse", ressourceId: reference.id
+        });
+    } catch (erreur) { toast(messageErreur(erreur), "erreur"); }
+}
+
+async function accepterDemandeCourse(id) {
+    const demande = Etat.donnees.demandesCourses.find(d => d.id === id);
+    if (!demande) return;
+    try {
+        await addDoc(refCollection("achatsSpecifiques"), {
+            nom: demande.nom, quantite: demande.quantite || "", note: demande.commentaire || "",
+            categorie: "Autre", achete: false, ajoutePar: moiId(), ajouteParNom: monNom(), dateAjout: Date.now()
+        });
+        await updateDoc(refDocument("demandesCourses", id), {
+            statut: "acceptee", dateTraitement: Date.now(), traiteePar: moiId(), traiteeParNom: monNom()
+        });
+        await creerNotification({
+            destinataireId: demande.demandeurId, type: "SHOPPING_REQUEST_ACCEPTED",
+            titre: "Demande acceptée", description: `« ${demande.nom} » a été ajouté aux courses.`,
+            ressourceType: "demandeCourse", ressourceId: id
+        });
+        toast("Ajouté aux courses");
+    } catch (erreur) { toast(messageErreur(erreur), "erreur"); }
+}
+
+async function refuserDemandeCourse(id) {
+    const demande = Etat.donnees.demandesCourses.find(d => d.id === id);
+    if (!demande) return;
+    try {
+        await updateDoc(refDocument("demandesCourses", id), {
+            statut: "refusee", dateTraitement: Date.now(), traiteePar: moiId(), traiteeParNom: monNom()
+        });
+        await creerNotification({
+            destinataireId: demande.demandeurId, type: "SHOPPING_REQUEST_REJECTED",
+            titre: "Demande refusée", description: `Votre demande « ${demande.nom} » a été refusée.`,
+            ressourceType: "demandeCourse", ressourceId: id
+        });
+        toast("Demande refusée");
+    } catch (erreur) { toast(messageErreur(erreur), "erreur"); }
 }
 
 /* ============================= F5. REPAS =============================== */
@@ -3951,7 +4096,14 @@ function nouvelEvenementImportant() {
         valeurs: { date: isoDate(aujourdhui()), recurrenceAnnuelle: true },
         texteValider: "Ajouter",
         async onValider(valeurs) {
-            if (await Donnees.ajouter("evenementsImportants", valeurs)) toast("Date enregistrée");
+            const id = await Donnees.ajouter("evenementsImportants", valeurs);
+            if (id) {
+                toast("Date enregistrée");
+                notifierParents({
+                    type: "FAMILY_EVENT_CREATED", titre: `Nouvel événement : ${valeurs.titre}`,
+                    description: formatDateIso(valeurs.date), ressourceType: "evenementImportant", ressourceId: id
+                });
+            }
         }
     });
 }
@@ -4055,7 +4207,7 @@ function bulleHTML(message, groupe) {
         <div class="pied">
             <span>${formatHeureMessage(message.dateCreation)}</span>
             ${message.important ? `<span class="badge badge-danger" style="font-size:10px">Important</span>` : ""}
-            ${groupe && (mienne || estAdmin()) && peutEcrire() ? `
+            ${groupe && (mienne || estAdmin()) ? `
                 <button class="btn-icone petit" data-epingler-message="${esc(message.id)}"
                     aria-label="${message.epingle ? "Désépingler" : "Épingler"} ce message">
                     <svg class="icone-s" aria-hidden="true"><use href="#i-epingle"></use></svg></button>
@@ -4126,9 +4278,7 @@ function ouvrirFilConversation({ id, nom, groupe, autreUid }) {
                 champ.value = "";
                 if (groupe) {
                     const important = boutonImportant?.getAttribute("aria-pressed") === "true";
-                    await Donnees.ajouter("messages", {
-                        texte, auteurId: moiId(), auteurNom: monNom() || "Membre", important, epingle: important
-                    });
+                    await envoyerMessageGroupe(texte, important);
                     if (boutonImportant) majBoutonImportant(false);
                 } else {
                     await envoyerMessagePrive(autreUid, texte);
@@ -4142,6 +4292,18 @@ function ouvrirFilConversation({ id, nom, groupe, autreUid }) {
 }
 
 /** Envoie un message privé, en créant la conversation si besoin (id déterministe). */
+/** Envoie un message dans le groupe familial. Contourne volontairement Donnees.ajouter
+ *  (et son verrou peutEcrire()) : un enfant doit pouvoir écrire dans le groupe — les
+ *  règles Firestore vérifient sa légitimité via estCetEnfant, pas ce gate client. */
+async function envoyerMessageGroupe(texte, important) {
+    try {
+        await addDoc(refCollection("messages"), {
+            texte, auteurId: moiId(), auteurNom: monNom() || "Membre",
+            important, epingle: important, dateCreation: Date.now()
+        });
+    } catch (erreur) { toast(messageErreur(erreur), "erreur"); }
+}
+
 async function envoyerMessagePrive(autreUid, texte) {
     const uid = Etat.utilisateur.uid;
     const participants = [uid, autreUid].sort();
@@ -4163,6 +4325,125 @@ async function envoyerMessagePrive(autreUid, texte) {
 
 function nouveauMessage() {
     Routeur.aller("messages");
+}
+
+/* ======================= NOTIFICATIONS (in-app) ========================
+   Pas de push serveur (aucun backend dans ce projet) : ces notifications
+   vivent dans Firestore et s'affichent tant que l'application est ouverte.
+   Types : SHOPPING_REQUEST_CREATED/_ACCEPTED/_REJECTED, FAMILY_EVENT_CREATED,
+   TASK_REMINDER, EVENT_REMINDER — facile d'en ajouter d'autres (même forme). */
+
+const ICONES_NOTIFICATION = {
+    SHOPPING_REQUEST_CREATED: "i-courses", SHOPPING_REQUEST_ACCEPTED: "i-coche",
+    SHOPPING_REQUEST_REJECTED: "i-fermer", FAMILY_EVENT_CREATED: "i-evenements",
+    TASK_REMINDER: "i-taches", EVENT_REMINDER: "i-calendrier"
+};
+const PAGE_PAR_RESSOURCE = { demandeCourse: "courses", evenementImportant: "evenements", tache: "taches", evenement: "calendrier" };
+
+/** Écrit une notification, sans condition — utilisé aussi par les rappels (soi-même). */
+async function ecrireNotification({ destinataireId, type, titre, description, ressourceType = "", ressourceId = "" }) {
+    if (!destinataireId) return;
+    try {
+        await addDoc(refCollection("notifications"), {
+            destinataireId, type, titre, description, ressourceType, ressourceId,
+            lu: false, dateCreation: Date.now()
+        });
+    } catch (erreur) { console.warn("Notification non envoyée :", erreur.code); }
+}
+
+/** Écrit une notification pour une AUTRE personne de la maison (jamais pour soi-même). */
+const creerNotification = payload => (!payload.destinataireId || payload.destinataireId === moiId())
+    ? Promise.resolve() : ecrireNotification(payload);
+
+/** Notifie tous les parents (membres non restreints) de la maison. */
+function notifierParents({ type, titre, description, ressourceType, ressourceId }) {
+    Etat.donnees.profils.filter(p => p.role !== "restreint").forEach(p =>
+        creerNotification({ destinataireId: p.id, type, titre, description, ressourceType, ressourceId }));
+}
+
+function notificationLigneHTML(n) {
+    const date = new Date(n.dateCreation || Date.now());
+    return `<button class="ligne carte-cliquable ${n.lu ? "" : "non-lue"}" data-ouvrir-notification="${esc(n.id)}"
+                style="align-items:flex-start;${n.lu ? "" : "border-color:var(--primaire)"}">
+        <span class="avatar" style="background:var(--surface-2);color:var(--primaire)">
+            <svg class="icone-s" aria-hidden="true"><use href="#${ICONES_NOTIFICATION[n.type] || "i-cloche"}"></use></svg>
+        </span>
+        <span class="ligne-corps">
+            <span class="ligne-titre">${esc(n.titre)}</span>
+            <span class="ligne-meta">${esc(n.description || "")}</span>
+            <span class="ligne-meta">${esc(formatJourCourt(date))} à ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}</span>
+        </span>
+    </button>`;
+}
+
+function ouvrirNotifications() {
+    const notifs = trierPar(Etat.donnees.notifications, "dateCreation", true);
+    ouvrirModale({
+        titre: "Notifications",
+        masquerPied: true,
+        corps: notifs.length
+            ? `<div class="anime-liste">${notifs.map(notificationLigneHTML).join("")}</div>`
+            : etatVideHTML("i-cloche", "Aucune notification", "Vous serez averti ici des demandes de courses et des rappels.")
+    });
+}
+
+async function ouvrirNotification(id) {
+    const notif = Etat.donnees.notifications.find(n => n.id === id);
+    if (!notif) return;
+    if (!notif.lu) await Donnees.modifier("notifications", id, { lu: true });
+    const page = PAGE_PAR_RESSOURCE[notif.ressourceType];
+    if (page) { pileModales.at(-1)?.(null); Routeur.aller(page); }
+}
+
+/** Récurrences « routinières » (tous les jours / certains jours chaque semaine) — pas
+ *  de « planning du jour » distinct dans ce modèle de données, c'est l'équivalent le
+ *  plus proche : attendu, pas besoin d'un rappel. */
+const estRoutinier = recurrence => ["quotidien", "jours"].includes(recurrence?.type);
+
+/** Clés de rappel déjà écrites cette session — évite de re-vérifier Firestore à
+ *  chaque minute pour la même occurrence tant que l'app reste ouverte. */
+const rappelsEnvoyesCetteSession = new Set();
+
+/** Rappel « dans 10 minutes » pour une tâche/un événement — uniquement tant que
+ *  l'application est ouverte (pas de serveur pour déclencher un vrai push, voir
+ *  CLAUDE.md). Appelé toutes les 60s depuis demarrerEcoutes. */
+function verifierRappels() {
+    if (!Etat.familleId || (!estEnfant() && Etat.profil?.rappelsActifs === false)) return;
+    const idPersonne = moiId();
+    if (!idPersonne) return;
+    const maintenant = Date.now();
+    const dansDixMin = maintenant + 10 * 60000;
+
+    const heureDebut = (dateIso, heure) => {
+        const d = depuisIso(dateIso);
+        if (!d || !heure) return null;
+        const [h, m] = heure.split(":").map(Number);
+        d.setHours(h, m || 0, 0, 0);
+        return d.getTime();
+    };
+
+    const programmer = (cle, ts, payload) => {
+        if (ts == null || ts <= maintenant || ts > dansDixMin) return;
+        if (rappelsEnvoyesCetteSession.has(cle)) return;
+        if (Etat.donnees.notifications.some(n => n.ressourceId === cle)) { rappelsEnvoyesCetteSession.add(cle); return; }
+        rappelsEnvoyesCetteSession.add(cle);
+        ecrireNotification({ destinataireId: idPersonne, ressourceId: cle, ...payload });
+    };
+
+    Etat.donnees.taches
+        .filter(t => t.assigneA === idPersonne && !t.fait && t.date && t.heureLimite && !estRoutinier(t.recurrence))
+        .forEach(t => programmer(`tache_${t.id}_${t.date}`, heureDebut(t.date, t.heureLimite), {
+            type: "TASK_REMINDER", titre: `Dans 10 minutes : ${t.nom}`, description: "",
+            ressourceType: "tache"
+        }));
+
+    Etat.donnees.evenements
+        .filter(ev => !ev.journeeEntiere && ev.date && ev.debut
+            && (!ev.personneId || ev.personneId === idPersonne) && !estRoutinier(ev.recurrence))
+        .forEach(ev => programmer(`evenement_${ev.id}_${ev.date}`, heureDebut(ev.date, ev.debut), {
+            type: "EVENT_REMINDER", titre: `Dans 10 minutes : ${ev.titre}`, description: ev.lieu || "",
+            ressourceType: "evenement"
+        }));
 }
 
 /* =========================== F8. DOCUMENTS ============================= */
@@ -4558,7 +4839,7 @@ function rendreFamille() {
             </div>
             ${enfantsListe.length ? enfantsListe.map(enfant => `
                 <div class="ligne">
-                    ${avatarHTML({ nom: enfant.nom, couleur: enfant.couleur }, "avatar-l")}
+                    ${avatarHTML({ nom: enfant.nom, couleur: enfant.couleur, photoURL: enfant.photoURL }, "avatar-l")}
                     <div class="ligne-corps">
                         <div class="ligne-titre">${esc(enfant.nom)}</div>
                         <div class="ligne-meta">Se connecte avec le code enfant</div>
@@ -4595,12 +4876,12 @@ function rendreProfil() {
     const couleur = estEnfantConnecte ? (enfant?.couleur || COULEURS_MEMBRE[3]) : (monProfil?.couleur || COULEURS_MEMBRE[0]);
     const nom = monNom() || "Moi";
 
-    const photoURL = !estEnfantConnecte && !stockageIndisponible ? (monProfil?.photoURL || "") : "";
+    const photoURL = !stockageIndisponible ? ((estEnfantConnecte ? enfant?.photoURL : monProfil?.photoURL) || "") : "";
     $("#contenuProfil").innerHTML = `
         <div class="carte centre" style="margin-bottom:var(--espace-5)">
             <div class="avatar-photo-conteneur">
                 ${avatarHTML({ nom, couleur, photoURL }, "avatar-xl")}
-                ${!estEnfantConnecte && !stockageIndisponible ? `<button class="btn-icone petit avatar-photo-bouton"
+                ${!stockageIndisponible ? `<button class="btn-icone petit avatar-photo-bouton"
                     data-action="changer-photo-profil" aria-label="Changer la photo de profil">
                     <svg class="icone-s" aria-hidden="true"><use href="#i-image"></use></svg></button>` : ""}
             </div>
@@ -4611,9 +4892,19 @@ function rendreProfil() {
         </div>
 
         ${estEnfantConnecte ? `
+            <section class="section">
+                <h3>Mon profil</h3>
+                <div class="liste-reglages">
+                    <div class="ligne">
+                        <div class="ligne-corps"><div class="ligne-titre">Ma couleur</div>
+                            <div class="ligne-meta">Utilisée dans le calendrier et les tâches</div></div>
+                        <button class="btn btn-contour btn-s" data-action="modifier-couleur-enfant">Modifier</button>
+                    </div>
+                </div>
+            </section>
             <div class="carte">
                 <p class="texte-doux">Tu es connecté en tant qu'enfant. Tu peux cocher tes tâches, tes courses et tes routines.</p>
-                <button class="btn btn-contour btn-bloc" data-action="quitter-famille" style="margin-top:var(--espace-3)">Changer de profil</button>
+                <button class="btn btn-contour btn-bloc" data-action="quitter-famille" style="margin-top:var(--espace-3)">Changer de maison</button>
             </div>`
         : `
         <section class="section">
@@ -4692,10 +4983,17 @@ function rendreParametres() {
         <section class="section">
             <h3>Notifications</h3>
             <div class="liste-reglages">
+                ${!estEnfant() ? `<div class="ligne">
+                    <svg class="icone texte-faible" aria-hidden="true"><use href="#i-cloche"></use></svg>
+                    <div class="ligne-corps"><div class="ligne-titre">Rappels avant les tâches et événements</div>
+                        <div class="ligne-meta">Dans l'application, 10 minutes avant — pas pour les éléments récurrents quotidiens</div></div>
+                    <button class="bascule" data-action="basculer-rappels" role="switch"
+                        aria-checked="${Etat.profil?.rappelsActifs !== false}" aria-label="Activer les rappels"><span></span></button>
+                </div>` : ""}
                 <div class="ligne">
                     <svg class="icone texte-faible" aria-hidden="true"><use href="#i-cloche"></use></svg>
-                    <div class="ligne-corps"><div class="ligne-titre">Rappels de tâches</div>
-                        <div class="ligne-meta">Notifications du navigateur</div></div>
+                    <div class="ligne-corps"><div class="ligne-titre">Notifications du navigateur</div>
+                        <div class="ligne-meta">Alerte visible même onglet en arrière-plan</div></div>
                     <button class="bascule" data-notifications role="switch"
                         aria-checked="${"Notification" in window && Notification.permission === "granted"}" aria-label="Activer les notifications"><span></span></button>
                 </div>
@@ -4856,6 +5154,24 @@ async function retirerMembre(uid) {
 }
 
 /* ---- Actions Profil ---- */
+function modifierCouleurEnfant() {
+    const enfant = Etat.donnees.enfants.find(e => e.id === Etat.enfantId);
+    ouvrirFormulaire({
+        titre: "Ma couleur",
+        champs: [{ id: "couleur", label: "Ma couleur", type: "couleur" }],
+        valeurs: enfant || {},
+        async onValider(valeurs) {
+            // updateDoc direct (pas Donnees.modifier) : les règles n'autorisent qu'un enfant
+            // à ne toucher que 'couleur'/'photoURL' sur sa propre fiche, rien d'autre.
+            try {
+                await updateDoc(refDocument("enfants", Etat.enfantId), { couleur: valeurs.couleur });
+                toast("Couleur mise à jour");
+                rendreProfil();
+            } catch (erreur) { toast(messageErreur(erreur), "erreur"); }
+        }
+    });
+}
+
 function modifierProfil() {
     ouvrirFormulaire({
         titre: "Mon profil",
@@ -4887,11 +5203,13 @@ async function envoyerPhotoProfil(fichier) {
     }
     toast("Envoi de la photo…", "info");
     try {
-        const chemin = `familles/${Etat.familleId}/avatars/${Etat.utilisateur.uid}`;
+        const identifiant = estEnfant() ? Etat.enfantId : Etat.utilisateur.uid;
+        const chemin = `familles/${Etat.familleId}/avatars/${identifiant}`;
         const reference = refStockage(stockage, chemin);
         await uploadBytes(reference, fichier, { contentType: fichier.type });
         const url = await getDownloadURL(reference);
-        await Donnees.modifier("profils", Etat.utilisateur.uid, { photoURL: url });
+        if (estEnfant()) await updateDoc(refDocument("enfants", Etat.enfantId), { photoURL: url });
+        else await Donnees.modifier("profils", Etat.utilisateur.uid, { photoURL: url });
         majAvatarEntete();
         rendreProfil();
         toast("Photo de profil mise à jour");
@@ -4908,10 +5226,12 @@ async function envoyerPhotoProfil(fichier) {
 }
 
 async function retirerPhotoProfil() {
+    const identifiant = estEnfant() ? Etat.enfantId : Etat.utilisateur.uid;
     try {
-        await deleteObject(refStockage(stockage, `familles/${Etat.familleId}/avatars/${Etat.utilisateur.uid}`));
+        await deleteObject(refStockage(stockage, `familles/${Etat.familleId}/avatars/${identifiant}`));
     } catch { /* déjà absente : on continue quand même */ }
-    await Donnees.modifier("profils", Etat.utilisateur.uid, { photoURL: "" });
+    if (estEnfant()) await updateDoc(refDocument("enfants", Etat.enfantId), { photoURL: "" });
+    else await Donnees.modifier("profils", Etat.utilisateur.uid, { photoURL: "" });
     majAvatarEntete();
     rendreProfil();
     toast("Photo retirée");
@@ -5007,8 +5327,36 @@ function quitterFamille() {
     localStorage.removeItem("vef-enfantNom");
     Etat.familleId = null;
     document.body.classList.remove("role-enfant", "role-membre");
-    if (auth.currentUser?.isAnonymous) { signOut(auth); return; }
+    if (auth.currentUser?.isAnonymous) { afficherMesMaisonsEnfant(); return; }
     afficherMesFamilles();
+}
+
+/** Sélecteur de maison pour un enfant : jamais de déconnexion, contrairement à un
+ *  parent, un enfant n'a pas de `membres[]` à interroger — on relit simplement ce que
+ *  ce navigateur a déjà mémorisé (voir retenirMaisonEnfant). */
+function afficherMesMaisonsEnfant() {
+    montrerEcran("ecranEnfant");
+    const maisons = maisonsEnfantMemorisees();
+    if (!maisons.length) {
+        $("#blocEnfantCodes").classList.remove("cachee");
+        $("#blocEnfantIdentite").classList.add("cachee");
+        return;
+    }
+    $("#blocEnfantCodes").classList.add("cachee");
+    $("#blocEnfantIdentite").classList.remove("cachee");
+    $("#listeChoixEnfant").innerHTML = maisons.map(m => `
+        <button class="ligne carte-cliquable" data-enfant="${esc(m.enfantId)}" data-enfant-nom="${esc(m.enfantNom)}"
+                data-famille="${esc(m.id)}" data-famille-nom="${esc(m.nom)}">
+            ${avatarHTML({ nom: m.enfantNom }, "avatar-l")}
+            <span class="ligne-corps">
+                <span class="ligne-titre">${esc(m.enfantNom)}</span>
+                <span class="ligne-meta">${esc(m.nom)}</span>
+            </span>
+            <svg class="icone" aria-hidden="true"><use href="#i-fleche-droite"></use></svg>
+        </button>`).join("")
+        + `<button class="btn btn-contour btn-bloc" data-action="ajouter-maison-enfant" style="margin-top:var(--espace-3)">
+            <svg class="icone-s" aria-hidden="true"><use href="#i-plus"></use></svg> Ajouter une autre maison
+        </button>`;
 }
 
 /* ============ G. DÉLÉGATION D'ÉVÉNEMENTS ET DÉMARRAGE ================== */
@@ -5026,6 +5374,10 @@ const ACTIONS = {
         $("#blocEnfantIdentite").classList.add("cachee");
         montrerEcran("ecranEnfant");
     },
+    "ajouter-maison-enfant": () => {
+        $("#blocEnfantCodes").classList.remove("cachee");
+        $("#blocEnfantIdentite").classList.add("cachee");
+    },
     "deconnexion":      deconnexion,
     "recharger-familles": afficherMesFamilles,
     "creer-famille":    ouvrirIntegration,
@@ -5042,6 +5394,7 @@ const ACTIONS = {
     "menu-plus":    ouvrirMenuPlus,
     "ajout-rapide": ouvrirAjoutRapide,
     "basculer-theme": () => Theme.basculer(),
+    "ouvrir-notifications": ouvrirNotifications,
     "quitter-famille": quitterFamille,
     "choisir-maison": ouvrirSelecteurMaison,
 
@@ -5053,6 +5406,7 @@ const ACTIONS = {
     "nouvel-evenement-important": nouvelEvenementImportant,
     "nouvelle-routine": nouvelleRoutine,
     "nouvelle-liste":  nouvelleListe,
+    "demander-course": demanderCourse,
     "nouvel-enfant":   nouvelEnfant,
 
     "vider-achetes":   viderAchetes,
@@ -5081,12 +5435,18 @@ const ACTIONS = {
     "renommer-famille":  renommerFamille,
     "changer-code-enfant": changerCodeEnfant,
     "modifier-profil":   modifierProfil,
+    "modifier-couleur-enfant": modifierCouleurEnfant,
     "changer-photo-profil": () => $("#champPhotoProfil").click(),
     "retirer-photo-profil": retirerPhotoProfil,
     "changer-mot-de-passe": changerMotDePasse,
     "categories-courses":   () => modifierCategories("categoriesCourses", "Rayons des courses", categoriesCourses()),
     "categories-documents": () => modifierCategories("categoriesDocuments", "Dossiers de documents", categoriesDocuments()),
     "exporter":          exporterDonnees,
+    "basculer-rappels":  async bouton => {
+        const actif = bouton.getAttribute("aria-checked") !== "true";
+        bouton.setAttribute("aria-checked", String(actif));
+        await Donnees.modifier("profils", Etat.utilisateur.uid, { rappelsActifs: actif });
+    },
     "supprimer-compte":  supprimerCompte
 };
 
@@ -5108,6 +5468,8 @@ const GESTIONNAIRES = {
     basculerArticle:      valeur => basculerArticle(valeur),
     modifierArticle:      valeur => modifierArticle(valeur),
     supprimerArticle:     valeur => supprimerArticle(valeur),
+    accepterDemande:      valeur => accepterDemandeCourse(valeur),
+    refuserDemande:       valeur => refuserDemandeCourse(valeur),
     repasCreneau:         valeur => { const [iso, type] = valeur.split("|"); ouvrirRepas(iso, type); },
     modifierImportant:    valeur => modifierEvenementImportant(valeur),
     supprimerImportant:   async valeur => {
@@ -5121,14 +5483,18 @@ const GESTIONNAIRES = {
         await Donnees.modifier("messages", valeur, { epingle: !message?.epingle });
     },
     supprimerMessage:     async valeur => {
+        // deleteDoc direct (pas Donnees.supprimer) : un enfant doit pouvoir supprimer
+        // son propre message, les règles Firestore tranchent, pas peutEcrire().
         if (await confirmer({ titre: "Supprimer le message", message: "Ce message sera retiré du tableau familial.", texteConfirmer: "Supprimer", danger: true })) {
-            if (await Donnees.supprimer("messages", valeur)) toast("Message supprimé");
+            try { await deleteDoc(refDocument("messages", valeur)); toast("Message supprimé"); }
+            catch (erreur) { toast(messageErreur(erreur), "erreur"); }
         }
     },
     ouvrirConversation:   valeur => {
         const [id, groupe, nom, autreUid] = valeur.split("|");
         ouvrirFilConversation({ id, nom, groupe: groupe === "1", autreUid: autreUid || null });
     },
+    ouvrirNotification:   valeur => ouvrirNotification(valeur),
     ouvrirDocument:       valeur => ouvrirDocument(valeur),
     renommerDocument:     valeur => renommerDocument(valeur),
     supprimerDocument:    valeur => supprimerDocument(valeur),
@@ -5172,8 +5538,11 @@ document.addEventListener("click", async e => {
     // 3. Choix de l'identité enfant
     const carteEnfant = e.target.closest("[data-enfant][data-famille-nom]");
     if (carteEnfant) {
-        entrerDansFamille(carteEnfant.dataset.famille, carteEnfant.dataset.familleNom, null,
-                          "enfant", carteEnfant.dataset.enfant, carteEnfant.dataset.enfantNom);
+        const { famille: familleId, familleNom, enfant: enfantId, enfantNom } = carteEnfant.dataset;
+        updateDoc(doc(db, "maisons", familleId, "enfants", enfantId), { uidActuel: auth.currentUser.uid })
+            .catch(erreur => console.warn("Claim d'identité enfant impossible :", erreur.code));
+        retenirMaisonEnfant(familleId, familleNom, enfantId, enfantNom);
+        entrerDansFamille(familleId, familleNom, null, "enfant", enfantId, enfantNom);
         return;
     }
     // 4. Interrupteur de notifications
@@ -5269,7 +5638,7 @@ onAuthStateChanged(auth, async utilisateur => {
         } catch (erreur) { console.warn("Reprise de session impossible :", erreur.code); }
     }
 
-    if (utilisateur.isAnonymous) ACTIONS["ouvrir-acces-enfant"]();
+    if (utilisateur.isAnonymous) afficherMesMaisonsEnfant();
     else afficherMesFamilles();
 });
 

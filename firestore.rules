@@ -68,6 +68,15 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/maisons/$(maisonId)/enfantsVerifies/$(request.auth.uid));
     }
 
+    /** Cette session anonyme EST-elle précisément cet enfant (et pas juste un enfant
+     *  vérifié quelconque de la maison) ? Repose sur enfants/{enfantId}.uidActuel,
+     *  posé au moment où l'enfant choisit son prénom (voir afficherChoixEnfant). */
+    function estCetEnfant(maisonId, enfantId) {
+      return estEnfantVerifie(maisonId)
+        && get(/databases/$(database)/documents/maisons/$(maisonId)/enfants/$(enfantId)).data.uidActuel
+           == request.auth.uid;
+    }
+
     function aAcces(maisonId) {
       return estMembre(maisonId) || estEnfantVerifie(maisonId);
     }
@@ -165,10 +174,15 @@ service cloud.firestore {
         allow delete: if request.auth.uid == uid || estAdmin(maisonId);
       }
 
-      /* ---- Enfants sans compte (prénom, couleur) : information de base, jamais restreinte ---- */
+      /* ---- Enfants sans compte (prénom, couleur, photo) : information de base, jamais restreinte
+         en lecture. Un parent gère tout ; un enfant vérifié peut poser son claim d'identité
+         (uidActuel) et modifier sa propre couleur/photo, jamais son prénom. ---- */
       match /enfants/{docId} {
         allow read: if aAcces(maisonId);
-        allow create, update, delete: if estMembre(maisonId);
+        allow create, delete: if estMembre(maisonId);
+        allow update: if estMembre(maisonId)
+          || (estEnfantVerifie(maisonId) && modifieUniquement(['uidActuel']))
+          || (estCetEnfant(maisonId, docId) && modifieUniquement(['couleur', 'photoURL']));
       }
 
       /* ---- Calendrier ---- */
@@ -214,6 +228,23 @@ service cloud.firestore {
           || enfantCoche(maisonId, ['achete', 'dateAchat', 'dateModification']);
       }
 
+      /* ---- Demandes de courses : un enfant demande, un parent valide. Jamais l'auteur
+         qui s'auto-valide, jamais un membre à accès restreint. ---- */
+      match /demandesCourses/{docId} {
+        allow read: if accesFonctionnalite(maisonId, 'courses') || estEnfantVerifie(maisonId);
+        allow create: if request.resource.data.statut == 'attente' && (
+          (accesFonctionnalite(maisonId, 'courses') && request.resource.data.demandeurId == request.auth.uid)
+          || estCetEnfant(maisonId, request.resource.data.demandeurId)
+        );
+        allow update: if estMembre(maisonId) && !estRestreint(maisonId)
+          && modifieUniquement(['statut', 'dateTraitement', 'traiteePar', 'traiteeParNom']);
+        allow delete: if estMembre(maisonId)
+          || (resource.data.statut == 'attente' && (
+                resource.data.demandeurId == request.auth.uid
+                || estCetEnfant(maisonId, resource.data.demandeurId)
+              ));
+      }
+
       /* ---- Repas ---- */
       match /repas/{docId} {
         allow read: if accesFonctionnalite(maisonId, 'repas') || estEnfantVerifie(maisonId);
@@ -226,12 +257,16 @@ service cloud.firestore {
         allow create, update, delete: if accesFonctionnalite(maisonId, 'evenements');
       }
 
-      /* ---- Messages : chacun gère les siens, l'admin gère tout ---- */
+      /* ---- Messages : chacun gère les siens, l'admin gère tout. Un enfant peut aussi
+         écrire dans le groupe et gérer ses propres messages (auteurId = un id
+         d'enfants/{id}, vérifié via estCetEnfant plutôt qu'un uid). ---- */
       match /messages/{docId} {
         allow read: if accesFonctionnalite(maisonId, 'messages') || estEnfantVerifie(maisonId);
-        allow create: if accesFonctionnalite(maisonId, 'messages') && request.resource.data.auteurId == request.auth.uid;
-        allow update, delete: if accesFonctionnalite(maisonId, 'messages')
-          && (resource.data.auteurId == request.auth.uid || estAdmin(maisonId));
+        allow create: if (accesFonctionnalite(maisonId, 'messages') && request.resource.data.auteurId == request.auth.uid)
+          || estCetEnfant(maisonId, request.resource.data.auteurId);
+        allow update, delete: if (accesFonctionnalite(maisonId, 'messages')
+            && (resource.data.auteurId == request.auth.uid || estAdmin(maisonId)))
+          || estCetEnfant(maisonId, resource.data.auteurId);
       }
 
       /* ---- Conversations privées : réservées aux membres ayant accès aux messages,
@@ -277,6 +312,14 @@ service cloud.firestore {
       match /meta/{docId} {
         allow read: if aAcces(maisonId);
         allow write: if estMembre(maisonId);
+      }
+
+      /* ---- Notifications : chacun écrit pour un autre membre de la même maison,
+         chacun ne lit/gère que les siennes. ---- */
+      match /notifications/{docId} {
+        allow create: if aAcces(maisonId);
+        allow read, update, delete: if resource.data.destinataireId == request.auth.uid
+          || estCetEnfant(maisonId, resource.data.destinataireId);
       }
     }
 

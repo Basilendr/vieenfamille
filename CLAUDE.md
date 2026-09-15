@@ -86,9 +86,26 @@ maisons/{CODE}                      { nom, proprietaireUid, membres: [uid], date
                                        (jamais aux enfants) ; id déterministe `dm_` + les deux uid triés
   /documents/{id}                   { nom, url, chemin, taille, typeMime, categorie, ajoutePar }
   /routines/{id}                    { nom, assigneA, recurrence, actif, etapes[], progression{ISO:[ids]} }
+  /demandesCourses/{id}             { nom, quantite, commentaire, demandeurId, demandeurNom,
+                                       statut: "attente"|"acceptee"|"refusee", dateCreation,
+                                       dateTraitement, traiteePar, traiteeParNom }
+                                     ← un enfant demande, un parent valide ; accepter ajoute
+                                       automatiquement l'article dans achatsSpecifiques
+  /notifications/{id}               { destinataireId, type, titre, description, dateCreation,
+                                       lu, ressourceType, ressourceId }
+                                     ← in-app uniquement (pas de serveur pour du vrai push) ;
+                                       types : SHOPPING_REQUEST_CREATED/_ACCEPTED/_REJECTED,
+                                       FAMILY_EVENT_CREATED, TASK_REMINDER, EVENT_REMINDER
   /meta/coursesSemaine              { semaine }        ← reset hebdomadaire automatique
   /meta/parametres                  { categoriesCourses[], categoriesDocuments[] }
 ```
+
+`enfants/{id}` porte aussi `photoURL` et, depuis 2026-09, `uidActuel` : l'uid de la session anonyme
+qui a choisi cette identité en dernier (posé par `retenirMaisonEnfant`/le clic sur « qui es-tu »).
+Sert de base à `estCetEnfant()` dans les règles — la seule façon de vérifier qu'un enfant écrit bien
+en son propre nom (message, demande de course, sa photo) et pas au nom d'un autre enfant de la
+maison. Ce n'est **pas** une authentification forte : une session anonyme perdue (nettoyage du
+navigateur, nouvel appareil) fait juste re-choisir le prénom, qui reprend la main sur l'identité.
 
 Fichiers dans Storage : `familles/{CODE}/documents/{id}_{nom}` et `familles/{CODE}/avatars/{uid}`
 (une seule photo par personne, écrasée à chaque changement — pas d'historique).
@@ -115,7 +132,16 @@ version : ne pas les fusionner dans `articles`, des données réelles y vivent.
   « fonctionnalités » à cocher) ; `Documents` reste de toute façon interdit à un enfant (voir plus bas).
 - **Enfant** : pas de compte. Saisit code famille + code enfant → connexion anonyme Firebase, puis
   écriture d'un doc dans `enfantsVerifies` que les règles n'autorisent que si le code enfant correspond.
-  Il choisit ensuite son prénom dans la liste.
+  Il choisit ensuite son prénom dans la liste (ce qui pose `enfants/{id}.uidActuel`, voir plus haut).
+  Depuis 2026-09, un enfant **n'est plus en lecture seule** : il peut écrire dans le groupe familial
+  (et gérer ses propres messages), créer une **demande de course** (jamais l'ajouter directement —
+  un parent valide), cocher ses tâches/courses/étapes de routine (déjà permis), et modifier sa propre
+  couleur/photo de profil (`enfants/{id}`, jamais son prénom). Toujours interdit : créer/modifier une
+  tâche, un événement, une routine, accéder aux documents, ou agir au nom d'un autre enfant.
+  Peut changer de maison sans se déconnecter : `afficherMesMaisonsEnfant()` relit la liste des
+  maisons déjà vérifiées avec succès sur **ce navigateur** (`localStorage['vef-enfant-maisons']`,
+  posée par `retenirMaisonEnfant`) — un enfant n'a pas de `membres[]` à interroger côté serveur
+  comme un parent, donc pas de synchronisation entre appareils pour cette liste.
 - Les restrictions sont **doublées**, pour les trois niveaux :
   - CSS/JS : `body.role-enfant .parent-seulement`, `body.role-membre .admin-seulement` (le membre
     « restreint » porte aussi `role-membre`), et `majVisibiliteNav()` qui masque les onglets de
@@ -139,6 +165,27 @@ Mot de passe exigé à la **création** d'un compte : 10 caractères minimum, un
 un chiffre (`motDePasseValide()`, section A). Ne s'applique pas à la connexion à un compte existant,
 pour ne pas bloquer les comptes déjà créés avec l'ancienne règle (6 caractères).
 
+## Notifications et rappels (2026-09)
+
+Centre de notifications in-app (cloche dans l'en-tête) — **pas de vrai push** : ce projet n'a aucun
+serveur (choix « aucun outillage » reconfirmé), donc rien ne peut déclencher un envoi quand l'appli
+est fermée. Décision actée avec l'utilisateur : notifications en base, visibles tant que l'app est
+ouverte, plutôt que de faire semblant. Si le besoin de vraies notifications hors application devient
+prioritaire, il faudrait des Firebase Cloud Functions (+ Cloud Scheduler pour les rappels programmés)
+— un vrai backend à déployer, à rediscuter avec l'utilisateur avant de l'introduire.
+
+- `creerNotification()`/`notifierParents()` : écriture immédiate après l'action (demande de course
+  créée/acceptée/refusée, nouvel événement important) — pas de délai, contrairement aux rappels.
+- `verifierRappels()` (appelée toutes les 60 s tant que l'app est ouverte, section G) : rappel
+  « dans 10 minutes » pour les tâches/événements de la personne connectée, **sauf** récurrence
+  quotidienne ou par jours de semaine (`estRoutinier`) — pas de « planning du jour » distinct dans
+  ce modèle de données, cette récurrence en tient lieu. Dédoublonnage par clé
+  `tache_{id}_{date}`/`evenement_{id}_{date}` : un changement d'heure produit naturellement une
+  nouvelle clé (donc un nouveau rappel), une tâche terminée/supprimée sort simplement du parcours
+  au tour suivant (pas de mécanisme d'annulation séparé).
+- Réglage personnel (Paramètres, `profils/{uid}.rappelsActifs`, `true` par défaut) — pour un enfant,
+  toujours actif (pas de stockage de préférence côté `enfants/{id}` pour l'instant).
+
 ## Configuration Firebase à faire / vérifier
 
 - Authentication → fournisseurs **Email/Password** et **Anonymous** activés. *(déjà fait)*
@@ -151,11 +198,14 @@ pour ne pas bloquer les comptes déjà créés avec l'ancienne règle (6 caract�
   **preview** (une par branche/PR) sont différentes et devront être ajoutées séparément si vous testez
   la connexion dessus.
 - Firestore → Rules : publier le contenu de `firestore.rules`. **À REPUBLIER, urgent** — plusieurs
-  changements de sécurité en attente : conversations privées, accès restreint par fonctionnalité, et
-  surtout la **correction d'une faille** sur `maisons/{maisonId}` (un membre simple pouvait modifier
-  n'importe quel champ, y compris s'auto-nommer propriétaire — voir § Accès et rôles). Tant que ce
-  n'est pas fait, la messagerie privée échoue silencieusement (`permission-denied`) et la faille reste
-  ouverte en production.
+  changements de sécurité en attente : conversations privées, accès restreint par fonctionnalité, la
+  **correction d'une faille** sur `maisons/{maisonId}` (un membre simple pouvait modifier n'importe
+  quel champ, y compris s'auto-nommer propriétaire — voir § Accès et rôles), et désormais aussi les
+  permissions élargies pour les enfants (messages, demandes de courses, photo/couleur) et les
+  collections `demandesCourses`/`notifications`. Tant que ce n'est pas fait : la messagerie privée
+  échoue silencieusement, la faille `maisons` reste ouverte, et **un enfant ne peut ni écrire de
+  message ni faire de demande de course** (vérifié en direct : le blocage vient bien du serveur, pas
+  de l'interface — testé avec un compte enfant qui reçoit `permission-denied` jusqu'à republication).
 - Storage → activer le service puis publier `storage.rules`. **Non fait à ce jour** : depuis fin 2024,
   Firebase impose le plan **Blaze** (carte bancaire au dossier) pour activer Storage. L'usage d'une
   famille reste dans le quota gratuit, mais la décision appartient à l'utilisateur.
@@ -212,8 +262,8 @@ couleur en dur dans un composant, toujours réutiliser une variable existante.
 
 - Tests automatisés (§34 du cahier des charges) : impossibles sans npm + l'émulateur Firebase,
   ce qui contredit la contrainte « aucun outillage ». À rouvrir si la contrainte évolue.
-- Notifications poussées hors application (nécessite Firebase Cloud Messaging + un service worker dédié).
-  L'architecture et le réglage existent déjà côté interface.
+- Notifications poussées hors application (nécessite Firebase Cloud Functions + Cloud Messaging, donc
+  un vrai backend — voir § Notifications et rappels). Le centre in-app existe, pas le push.
 - Synchronisation Google Calendar / Apple Calendar (le modèle de données s'y prête).
 - Approbation par l'administrateur avant qu'un parent rejoigne (aujourd'hui, quiconque a le code peut rejoindre).
 - Permissions par document dans l'espace Documents.

@@ -44,18 +44,27 @@ service firebase.storage {
       allow delete: if accesDocuments(familleId);
     }
 
-    /* ---- Photos de profil : chacun ne gère que la sienne ---- */
+    /* ---- Photos de profil : chacun ne gère que la sienne. Pour un enfant, {uid}
+       est l'id de son document enfants/{id} (jamais son uid anonyme, qui change
+       d'une session à l'autre) — vérifié via le même claim uidActuel que Firestore. ---- */
     function estEnfantVerifie(familleId) {
       return request.auth != null && firestore.exists(
         /databases/(default)/documents/maisons/$(familleId)/enfantsVerifies/$(request.auth.uid));
     }
 
+    function estCetEnfant(familleId, enfantId) {
+      return estEnfantVerifie(familleId) && firestore.get(
+        /databases/(default)/documents/maisons/$(familleId)/enfants/$(enfantId)).data.uidActuel == request.auth.uid;
+    }
+
     match /familles/{familleId}/avatars/{uid} {
       allow read: if estMembre(familleId) || estEnfantVerifie(familleId);
-      allow write: if request.auth != null && request.auth.uid == uid && estMembre(familleId)
-        && request.resource.size < 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*');
-      allow delete: if request.auth != null && request.auth.uid == uid && estMembre(familleId);
+      allow write: if request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*')
+        && ((request.auth != null && request.auth.uid == uid && estMembre(familleId))
+            || estCetEnfant(familleId, uid));
+      allow delete: if (request.auth != null && request.auth.uid == uid && estMembre(familleId))
+        || estCetEnfant(familleId, uid);
     }
 
     // Aucun autre chemin n'est accessible.
