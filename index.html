@@ -524,7 +524,11 @@ select.saisie {
         display: flex; align-items: center; gap: var(--espace-3);
         padding: var(--espace-2) var(--espace-3) var(--espace-4);
     }
-    .laterale-marque .logo { width: 34px; height: 34px; border-radius: 11px; background: var(--degrade); flex: none; }
+    .laterale-marque .logo {
+        width: 34px; height: 34px; border-radius: 11px; background: var(--degrade); flex: none;
+        display: flex; align-items: center; justify-content: center; color: var(--sur-primaire);
+    }
+    .laterale-marque .logo .icone-s { width: 19px; height: 19px; }
     .laterale-marque strong { font-family: var(--police-titre); font-size: var(--taille-m); font-weight: 400; }
     .laterale-section {
         padding: var(--espace-4) var(--espace-3) var(--espace-2);
@@ -640,7 +644,11 @@ main { display: block; }
     padding: var(--espace-4) var(--espace-5); max-width: 1180px; margin: 0 auto;
 }
 .nav-garde .marque { display: flex; align-items: center; gap: var(--espace-3); font-family: var(--police-titre); font-size: var(--taille-m); }
-.nav-garde .logo { width: 34px; height: 34px; border-radius: 11px; background: var(--degrade); flex: none; }
+.nav-garde .logo {
+    width: 34px; height: 34px; border-radius: 11px; background: var(--degrade); flex: none;
+    display: flex; align-items: center; justify-content: center; color: var(--sur-primaire);
+}
+.nav-garde .logo .icone-s { width: 19px; height: 19px; }
 .nav-garde .actions { margin-left: auto; display: flex; gap: var(--espace-2); }
 .hero { max-width: 1180px; margin: 0 auto; padding: var(--espace-7) var(--espace-5) var(--espace-6); text-align: center; }
 .hero h1 { font-size: clamp(34px, 8vw, 60px); margin-bottom: var(--espace-4); }
@@ -1049,7 +1057,7 @@ body.role-enfant .parent-seulement { display: none !important; }
 <!-- ============================ PAGE DE GARDE ============================ -->
 <div id="ecranGarde" class="ecran">
     <header class="nav-garde">
-        <span class="marque"><span class="logo" aria-hidden="true"></span> VieEnFamille</span>
+        <span class="marque"><span class="logo" aria-hidden="true"><svg class="icone-s" aria-hidden="true"><use href="#i-accueil"></use></svg></span> VieEnFamille</span>
         <div class="actions">
             <button class="btn btn-fantome btn-s" data-action="auth-connexion">Se connecter</button>
             <button class="btn btn-primaire btn-s" data-action="auth-inscription">Créer un compte</button>
@@ -1103,7 +1111,7 @@ body.role-enfant .parent-seulement { display: none !important; }
                     </div>
                     <div class="champ">
                         <label for="authMdp">Mot de passe</label>
-                        <input class="saisie" id="authMdp" type="password" autocomplete="current-password" required placeholder="6 caractères minimum">
+                        <input class="saisie" id="authMdp" type="password" autocomplete="current-password" required placeholder="Votre mot de passe">
                         <p class="erreur-champ cachee" id="erreurAuthMdp"></p>
                     </div>
                     <p class="erreur-champ cachee" id="erreurAuth" role="alert"></p>
@@ -1256,7 +1264,7 @@ body.role-enfant .parent-seulement { display: none !important; }
     <!-- Barre latérale (≥ 900px) -->
     <aside class="laterale" aria-label="Navigation principale">
         <div class="laterale-marque">
-            <span class="logo" aria-hidden="true"></span>
+            <span class="logo" aria-hidden="true"><svg class="icone-s" aria-hidden="true"><use href="#i-accueil"></use></svg></span>
             <button class="selecteur-maison" data-action="choisir-maison" title="Changer de maison">
                 <span class="nom" id="lateraleNomFamille">VieEnFamille</span>
                 <svg class="icone-s" aria-hidden="true"><use href="#i-bas"></use></svg>
@@ -1566,6 +1574,10 @@ function genererCodeFamille() {
 const formaterCodeFamille = code => code ? `${code.slice(0, 4)}-${code.slice(4)}` : "";
 const nettoyerCodeFamille = saisie => (saisie || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
 
+/** Mot de passe exigé à la création d'un compte : 10 caractères, majuscule, minuscule, chiffre. */
+const MESSAGE_MDP_FAIBLE = "Le mot de passe doit faire au moins 10 caractères et contenir une majuscule, une minuscule et un chiffre.";
+const motDePasseValide = mdp => mdp.length >= 10 && /[a-z]/.test(mdp) && /[A-Z]/.test(mdp) && /[0-9]/.test(mdp);
+
 /** Trie une copie du tableau sans muter l'original. */
 function trierPar(tableau, cle, decroissant = false) {
     return [...tableau].sort((a, b) => {
@@ -1725,7 +1737,7 @@ function messageErreur(erreur) {
         "auth/wrong-password": "Mot de passe incorrect.",
         "auth/invalid-credential": "Adresse e-mail ou mot de passe incorrect.",
         "auth/email-already-in-use": "Un compte existe déjà avec cette adresse.",
-        "auth/weak-password": "Le mot de passe doit faire au moins 6 caractères.",
+        "auth/weak-password": MESSAGE_MDP_FAIBLE,
         "auth/too-many-requests": "Trop de tentatives. Réessayez dans quelques minutes.",
         "auth/network-request-failed": "Connexion impossible. Vérifiez votre réseau.",
         "auth/requires-recent-login": "Par sécurité, reconnectez-vous avant de faire cela.",
@@ -1733,6 +1745,7 @@ function messageErreur(erreur) {
         "auth/popup-blocked": "Le navigateur a bloqué la fenêtre Google. Autorisez les pop-up et réessayez.",
         "auth/account-exists-with-different-credential": "Un compte existe déjà avec cette adresse, via un autre moyen de connexion.",
         "auth/operation-not-allowed": "La connexion Google n'est pas encore activée sur ce site.",
+        "auth/unauthorized-domain": "Ce site n'est pas encore autorisé à se connecter (domaine non déclaré dans Firebase).",
         "permission-denied": "Vous n'avez pas les droits pour faire cela.",
         "unavailable": "Service indisponible. Vérifiez votre connexion.",
         "storage/unauthorized": "Vous n'avez pas les droits sur ce fichier.",
@@ -2208,6 +2221,8 @@ function majEcranAuth() {
     $("#champPrenom").hidden = !modeInscription;
     $("#btnMdpOublie").classList.toggle("cachee", modeInscription);
     $("#authMdp").setAttribute("autocomplete", modeInscription ? "new-password" : "current-password");
+    $("#authMdp").setAttribute("placeholder", modeInscription
+        ? "10 caractères min., 1 majuscule, 1 chiffre" : "Votre mot de passe");
     $("#erreurAuth").classList.add("cachee");
 }
 
@@ -2226,8 +2241,12 @@ $("#formAuth").addEventListener("submit", async e => {
     $("#erreurAuth").classList.add("cachee");
 
     if (!email) return afficherErreurAuth("Indiquez votre adresse e-mail.");
-    if (motDePasse.length < 6) return afficherErreurAuth("Le mot de passe doit faire au moins 6 caractères.");
-    if (modeInscription && !prenom) return afficherErreurAuth("Indiquez votre prénom.");
+    if (modeInscription) {
+        if (!motDePasseValide(motDePasse)) return afficherErreurAuth(MESSAGE_MDP_FAIBLE);
+        if (!prenom) return afficherErreurAuth("Indiquez votre prénom.");
+    } else if (!motDePasse) {
+        return afficherErreurAuth("Indiquez votre mot de passe.");
+    }
 
     bouton.dataset.charge = "1";
     try {
@@ -4769,11 +4788,12 @@ function changerMotDePasse() {
         titre: "Changer de mot de passe",
         champs: [
             { id: "actuel", label: "Mot de passe actuel", type: "texte", requis: true },
-            { id: "nouveau", label: "Nouveau mot de passe", type: "texte", requis: true, aide: "6 caractères minimum." }
+            { id: "nouveau", label: "Nouveau mot de passe", type: "texte", requis: true,
+              aide: "10 caractères min., avec une majuscule, une minuscule et un chiffre." }
         ],
         texteValider: "Changer",
         async onValider(valeurs) {
-            if (valeurs.nouveau.length < 6) { toast("Le nouveau mot de passe est trop court.", "erreur"); return false; }
+            if (!motDePasseValide(valeurs.nouveau)) { toast(MESSAGE_MDP_FAIBLE, "erreur"); return false; }
             const identifiants = EmailAuthProvider.credential(Etat.utilisateur.email, valeurs.actuel);
             await reauthenticateWithCredential(Etat.utilisateur, identifiants);
             await updatePassword(Etat.utilisateur, valeurs.nouveau);
