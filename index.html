@@ -1290,6 +1290,18 @@ body.role-enfant .parent-seulement { display: none !important; }
                 <button class="btn btn-contour btn-s" data-action="choisir-fichier" style="margin-top:var(--espace-3)">Choisir un fichier</button>
                 <input type="file" id="champFichier" class="invisible-visuel" accept=".pdf,.jpg,.jpeg,.png,.webp,.heic,.doc,.docx,.xls,.xlsx,.txt,.csv">
             </div>
+            <div class="carte etat-erreur cachee" id="bandeauStockage" style="margin-bottom:var(--espace-4)">
+                <div class="rangee" style="align-items:flex-start">
+                    <svg class="icone" aria-hidden="true" style="color:var(--danger)"><use href="#i-alerte"></use></svg>
+                    <div>
+                        <strong>Espace Documents non activé</strong>
+                        <p class="texte-doux" style="font-size:var(--taille-s);margin:4px 0 0">
+                            Firebase Storage doit être activé dans la console du projet pour envoyer des fichiers.
+                            Tout le reste de l'application fonctionne normalement.
+                        </p>
+                    </div>
+                </div>
+            </div>
             <div class="puces-filtre" id="documentsFiltres" role="group" aria-label="Filtrer par dossier"></div>
             <div id="listeDocuments" aria-live="polite"></div>
         </section>
@@ -1590,6 +1602,14 @@ function toast(message, variante = "succes", action = null) {
     }, action ? 7000 : 3600);
 }
 
+/**
+ * L'espace Documents repose sur Firebase Storage, qui doit être activé dans la
+ * console (plan Blaze). Tant qu'il ne l'est pas, on le dit clairement plutôt
+ * que de laisser remonter une erreur technique.
+ */
+const MESSAGE_STOCKAGE_INDISPONIBLE =
+    "L'espace Documents n'est pas encore activé sur ce projet Firebase.";
+
 /** Traduit les erreurs techniques en messages compréhensibles. */
 function messageErreur(erreur) {
     const code = erreur?.code || "";
@@ -1608,7 +1628,12 @@ function messageErreur(erreur) {
         "unavailable": "Service indisponible. Vérifiez votre connexion.",
         "storage/unauthorized": "Vous n'avez pas les droits sur ce fichier.",
         "storage/canceled": "Envoi annulé.",
-        "storage/retry-limit-exceeded": "L'envoi a échoué. Réessayez."
+        "storage/retry-limit-exceeded": "L'envoi a échoué. Réessayez.",
+        "storage/quota-exceeded": "L'espace de stockage de la famille est plein.",
+        "storage/object-not-found": "Ce fichier n'existe plus.",
+        "storage/unknown": MESSAGE_STOCKAGE_INDISPONIBLE,
+        "storage/bucket-not-found": MESSAGE_STOCKAGE_INDISPONIBLE,
+        "storage/project-not-found": MESSAGE_STOCKAGE_INDISPONIBLE
     };
     if (table[code]) return table[code];
     if (String(erreur?.message || "").includes("Failed to fetch")) return "Connexion impossible. Vérifiez votre réseau.";
@@ -3712,7 +3737,15 @@ function nouveauMessage() {
 
 /* =========================== F8. DOCUMENTS ============================= */
 
+/** Passe à vrai dès qu'un envoi révèle que Storage n'est pas activé. */
+let stockageIndisponible = false;
+
 function rendreDocuments() {
+    const zone = $("#zoneDepot");
+    if (zone) zone.classList.toggle("cachee", stockageIndisponible);
+    const bandeau = $("#bandeauStockage");
+    if (bandeau) bandeau.classList.toggle("cachee", !stockageIndisponible);
+
     const categories = ["tous", ...categoriesDocuments()];
     $("#documentsFiltres").innerHTML = categories.map(c =>
         `<button class="puce" data-filtre-document="${esc(c)}" aria-pressed="${Etat.ui.documentsFiltre === c}">
@@ -3768,7 +3801,16 @@ async function envoyerDocument(fichier) {
         });
         toast("Document ajouté");
     } catch (erreur) {
-        toast(messageErreur(erreur), "erreur");
+        const codesStockageAbsent = ["storage/unknown", "storage/bucket-not-found", "storage/project-not-found"];
+        if (codesStockageAbsent.includes(erreur?.code)) {
+            stockageIndisponible = true;
+            rendreDocuments();
+            await alerter("Espace Documents non activé",
+                "Pour envoyer des fichiers, un administrateur doit activer Storage dans la console Firebase. "
+                + "Le reste de l'application fonctionne normalement.");
+        } else {
+            toast(messageErreur(erreur), "erreur");
+        }
     } finally { zone.classList.remove("survol"); }
 }
 

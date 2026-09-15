@@ -102,8 +102,11 @@ version : ne pas les fusionner dans `articles`, des données réelles y vivent.
   **À refaire à chaque nouvelle URL Netlify**, sinon la connexion échoue.
 - Firestore → Rules : publier le contenu de `firestore.rules`. **À REPUBLIER** — les règles ont changé
   (profils, evenements, listes, articles, repas, evenementsImportants, messages, documents, routines).
-- Storage → activer le service puis publier `storage.rules`. **Nouveau** : sans cela, l'onglet
-  Documents ne peut rien envoyer.
+- Storage → activer le service puis publier `storage.rules`. **Non fait à ce jour** : depuis fin 2024,
+  Firebase impose le plan **Blaze** (carte bancaire au dossier) pour activer Storage. L'usage d'une
+  famille reste dans le quota gratuit, mais la décision appartient à l'utilisateur.
+  Tant que Storage n'est pas activé, l'onglet Documents affiche un bandeau d'explication et refuse
+  proprement les envois (`stockageIndisponible` dans la section F8) — **tout le reste fonctionne**.
 
 ## Direction visuelle
 

@@ -52,6 +52,14 @@ Puis http://localhost:8080 (`localhost` est autorisé par défaut dans Firebase)
 Ces restrictions sont appliquées deux fois : dans l'interface, et surtout dans
 les règles de sécurité côté serveur.
 
+## Espace Documents et plan Firebase
+
+L'onglet Documents repose sur Firebase Storage, dont l'activation requiert le
+plan Blaze depuis fin 2024. Tant qu'il n'est pas activé, cet onglet affiche une
+explication et refuse les envois — **le reste de l'application fonctionne
+normalement** : calendrier, tâches, courses, repas, routines, messages et
+événements ne dépendent que de Firestore.
+
 ## Sécurité
 
 La clé API Firebase présente dans `index.html` n'est pas un secret : c'est un
